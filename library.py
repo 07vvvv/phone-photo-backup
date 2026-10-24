@@ -320,6 +320,84 @@ def recycle(paths):
         return False, str(exc)
 
 
+def _dropfiles_blob(paths):
+    """构造 CF_HDROP 的剪贴板负载：DROPFILES 头 + UTF-16 双 NUL 结尾的文件名表。
+
+    单独抽出来是为了能自检字节结构 —— 真正写剪贴板那一步不做自检，
+    那会把用户当前剪贴板的内容覆盖掉。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class DROPFILES(ctypes.Structure):
+        _fields_ = [
+            ("pFiles", wintypes.DWORD),
+            ("pt", wintypes.POINT),
+            ("fNC", wintypes.BOOL),
+            ("fWide", wintypes.BOOL),
+        ]
+
+    head = DROPFILES()
+    head.pFiles = ctypes.sizeof(DROPFILES)
+    head.fWide = True                      # fWide=1 → 文件名按 UTF-16 存
+    names = "\0".join(os.path.abspath(p) for p in paths) + "\0\0"
+    return bytes(head) + names.encode("utf-16-le")
+
+
+def copy_to_clipboard(paths):
+    """把文件放进剪贴板（CF_HDROP）：资源管理器里 Ctrl+V 就得到一份副本。
+
+    语义和右键「复制」一致 —— 复制的是文件本身，不是图片像素或路径字符串。
+    只读这些路径，不移动、不改名、不删除任何文件。
+    """
+    files = [os.path.abspath(p) for p in paths if os.path.isfile(p)]
+    if not files:
+        return False, "没有可复制的文件"
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        blob = _dropfiles_blob(files)
+        k32 = ctypes.windll.kernel32
+        u32 = ctypes.windll.user32
+        k32.GlobalAlloc.restype = ctypes.c_void_p
+        k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        k32.GlobalLock.restype = ctypes.c_void_p
+        k32.GlobalLock.argtypes = [ctypes.c_void_p]
+        k32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        k32.GlobalFree.argtypes = [ctypes.c_void_p]
+
+        GMEM_MOVEABLE = 0x0002
+        h = k32.GlobalAlloc(GMEM_MOVEABLE, len(blob))
+        if not h:
+            return False, "剪贴板内存分配失败"
+        p = k32.GlobalLock(h)
+        if not p:
+            k32.GlobalFree(h)
+            return False, "剪贴板内存锁定失败"
+        ctypes.memmove(p, blob, len(blob))
+        k32.GlobalUnlock(h)
+
+        CF_HDROP = 15
+        if not u32.OpenClipboard(None):
+            k32.GlobalFree(h)
+            return False, "剪贴板正被其他程序占用，稍后再试"
+        try:
+            u32.EmptyClipboard()
+            u32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+            u32.SetClipboardData.restype = ctypes.c_void_p
+            if not u32.SetClipboardData(CF_HDROP, h):
+                return False, "写入剪贴板失败"
+            h = None        # 成功后所有权归系统，不能再 GlobalFree
+        finally:
+            u32.CloseClipboard()
+            if h:
+                k32.GlobalFree(h)
+    except Exception as exc:      # noqa: BLE001
+        return False, f"{type(exc).__name__}: {exc}"
+    return True, len(files)
+
+
 # --------------------------------------------------------------------------
 # 本机文件：这台电脑上的图片视频（只读展示，原文件一个都不动）
 # --------------------------------------------------------------------------

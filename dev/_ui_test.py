@@ -134,6 +134,9 @@ if getattr(app, "_migrate_job", None):      # 启动时的归类提示会卡住�
     app._migrate_job = None
 
 real_root = app.root_dir
+# 本文件测的是备份库的网格 / 菜单 / 删除，与「查看」默认落在哪个入口无关，
+# 显式切回「全部设备」，免得默认的「本机文件」把 tree_data 换成别的年月
+app.lib_picker._pick(mod.ALL_DEVICES)
 app.root_dir = tmp_root
 app.refresh_library()
 for _ in range(8):

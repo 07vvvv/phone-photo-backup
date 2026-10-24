@@ -357,11 +357,14 @@ class DevicePicker(tk.Canvas):
     def value(self):
         return self._value
 
-    def set_items(self, items, empty_text="未检测到手机"):
+    def set_items(self, items, empty_text="未检测到手机", default=None):
         """items 里每项可以是字符串，也可以是 (值, 显示名)。
 
         多设备场景下「值」得是 adb 的 serial（`ip:端口` 或 USB 序列号），
         但那个东西给人看太难看，所以显示名单独给。
+
+        default 只在「当前值不在列表里」时生效（首次填充、或选中的设备已经
+        从列表里消失）；用户手动选过的值不会被它覆盖。
         """
         pairs = []
         for it in items:
@@ -372,7 +375,9 @@ class DevicePicker(tk.Canvas):
         self._items = pairs
         values = [v for v, _ in pairs]
         if self._value not in values:
-            self._value = values[0] if values else ""
+            # 默认项优先；它也不在列表里（比如那台手机没接）才退回第一项
+            self._value = (str(default) if default is not None and str(default) in values
+                           else (values[0] if values else ""))
         self.refresh_label(empty_text)
 
     def refresh_label(self, empty_text="未检测到手机"):

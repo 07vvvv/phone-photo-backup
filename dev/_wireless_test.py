@@ -415,8 +415,8 @@ saved_cfg = []
 try:
     app.root_dir = tmp_root
     app.refresh_library()
-    ok("临时库里的设备被识别出来", app.lib_picker.value == mod.ALL_DEVICES
-       and "OLD-NAME" in [v for v, _l in app.lib_picker._items])
+    ok("临时库里的设备被识别出来",
+       "OLD-NAME" in [v for v, _l in app.lib_picker._items])
 
     # 假装 config 里已经记着这台设备（真机上就是 _probe_device 写进去的那条）
     mod.load_config = lambda: {"devices": {"fakekey": {"label": "假设备", "dir": "OLD-NAME"}}}

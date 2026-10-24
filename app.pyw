@@ -44,6 +44,9 @@ THUMBS_PER_DRAIN = 24
 BAR_H = 4                # 视频进度条高度
 BAR_GAP = 10             # 进度条与视频窗口底边的间距
 
+MAX_ZOOM = 6.0           # 大图最大放大倍数（1.0 = 适应窗口）
+ZOOM_STEP = 1.2          # 滚轮一格放大 / 缩小多少
+
 
 def enable_dpi_awareness():
     """让界面在高 DPI 屏上保持清晰。
@@ -144,6 +147,12 @@ class Viewer(tk.Toplevel):
         self._was_down = True       # 上一轮左键状态，用来取「按下」的上升沿
         self._bar_fill = None       # 进度条里那段已播的填充
         self._dragging = False      # 正在拖进度条
+        self.zoom = 1.0             # 1.0 = 适应窗口，滚轮放大到 MAX_ZOOM
+        self._pan = [0.0, 0.0]      # 放大后相对居中位置的平移量（画布像素）
+        self._img = None            # 当前静态图的 PIL 原图（缩放/平移时反复用）
+        self._path = None           # self._img 对应哪个文件
+        self._fallback_hint = False # 这张图是不是靠系统解码器才显示出来的
+        self._last = None           # 上一次 B1-Motion 的坐标
         self.geometry("1040x740")
         self.configure(bg=self.CANVAS_BG)
 
@@ -175,7 +184,8 @@ class Viewer(tk.Toplevel):
         # 长按 = 按住不放 350ms，对应手机上的「长按照片看动图」
         self.canvas.bind("<ButtonPress-1>", self._hold_start)
         self.canvas.bind("<ButtonRelease-1>", self._hold_end)
-        self.canvas.bind("<B1-Motion>", self._drag_seek)      # 拖进度条
+        self.canvas.bind("<B1-Motion>", self._on_b1_motion)   # 拖进度条 / 放大后平移
+        self.canvas.bind("<MouseWheel>", self._on_wheel)      # 缩放（break 挡住全局滚轮）
         self.after(60, self.render)
 
     def _on_configure(self, _event):
@@ -190,6 +200,7 @@ class Viewer(tk.Toplevel):
             self.render()
 
     def _hold_start(self, event):
+        self._last = (event.x, event.y)         # 放大后平移要用它算增量
         if self._bar_hit(event.x, event.y):     # 按在进度条上 = 拖动，不是长按
             self._dragging = True
             self._seek_to(event.x)
@@ -205,9 +216,147 @@ class Viewer(tk.Toplevel):
         if self.motion:              # 只有长按看动图才「松手即停」
             self._stop_video()       # 视频文件是常驻播放，松手不能停掉
 
-    def _drag_seek(self, event):
+    def _on_b1_motion(self, event):
+        """按住左键拖动：进度条上是跳转，放大状态是平移画面。"""
         if self._dragging:
             self._seek_to(event.x)
+            return
+        if self._img is None or self.zoom <= 1.0 or self._last is None:
+            return
+        dx, dy = event.x - self._last[0], event.y - self._last[1]
+        if not dx and not dy:
+            return
+        self._last = (event.x, event.y)
+        if self._hold:                 # 已经在拖了，就别再触发「长按看动图」
+            self.after_cancel(self._hold)
+            self._hold = None
+        self._pan[0] += dx
+        self._pan[1] += dy
+        self._clamp_pan(*self._img.size)
+        self._redraw_static()
+
+    # ---------------- 缩放 ----------------
+
+    def _on_wheel(self, event):
+        """滚轮缩放，以光标为锚点。
+
+        必须返回 "break"：主窗口对滚轮用的是 bind_all，不挡住的话
+        查看器里每滚一格，背后的缩略图网格也会跟着滚。
+        """
+        if self.video or self._img is None:
+            return "break"
+        self._zoom_at(event.x, event.y,
+                      ZOOM_STEP if event.delta > 0 else 1.0 / ZOOM_STEP)
+        return "break"
+
+    def _zoom_at(self, mx, my, step):
+        iw, ih = self._img.size
+        fit = self._fit_scale(iw, ih)
+        old = self.zoom
+        new = min(MAX_ZOOM, max(1.0, old * step))
+        if abs(new - old) < 1e-4:
+            return
+        s_old, s_new = fit * old, fit * new
+        W, H = self.winfo_width(), self.winfo_height()
+        cx, cy = W // 2, (H - 40) // 2
+        x0 = cx - iw * s_old / 2 + self._pan[0]
+        y0 = cy - ih * s_old / 2 + self._pan[1]
+        ix = (mx - x0) / s_old            # 光标下的那个像素，在原图里的位置
+        iy = (my - y0) / s_old
+        self.zoom = new
+        # 缩完之后，让同一个像素仍落在光标下面
+        self._pan[0] = mx - ix * s_new - (cx - iw * s_new / 2)
+        self._pan[1] = my - iy * s_new - (cy - ih * s_new / 2)
+        self._clamp_pan(iw, ih)
+        self._redraw_static()
+
+    def _fit_scale(self, iw, ih):
+        """zoom=1 时的基准比例：整张图刚好放进内容区（只缩小，不放大）。
+
+        放大后的一切计算都以 fit*zoom 为「实际显示比例」，这样大图在 1.0
+        是「适应窗口」而不是「原尺寸裁掉一半」。
+        """
+        w = max(self.winfo_width() - 160, 120)
+        h = max(self.winfo_height() - 100, 120)
+        if iw <= 0 or ih <= 0:
+            return 1.0
+        return min(1.0, w / iw, h / ih)
+
+    def _clamp_pan(self, iw, ih):
+        """平移不许把图片拖出视口：最多贴到边；图片没超出视口时自动归零。"""
+        s = self._fit_scale(iw, ih) * self.zoom
+        W = max(self.winfo_width(), 120)
+        H = max(self.winfo_height() - 40, 120)
+        lx = max(0.0, (iw * s - W) / 2)
+        ly = max(0.0, (ih * s - H) / 2)
+        self._pan[0] = min(lx, max(-lx, self._pan[0]))
+        self._pan[1] = min(ly, max(-ly, self._pan[1]))
+
+    def _redraw_static(self):
+        self.canvas.delete("all")
+        self._bar_fill = None
+        self._draw_static()
+        self._update_hint()
+
+    def _draw_static(self):
+        """按 zoom/pan 把「看得见的那一块」裁出来缩放上屏。
+
+        为什么不整张 resize：放大 6 倍后整图有上万像素，整张缩放要好几百 MB；
+        只裁视口那么大一块，内存和耗时只跟窗口尺寸有关。
+        """
+        img = self._img
+        if img is None:
+            return
+        from PIL import Image
+        iw, ih = img.size
+        s = self._fit_scale(iw, ih) * self.zoom
+        W, H = self.winfo_width(), self.winfo_height()
+        cx, cy = W // 2, (H - 40) // 2
+        dw, dh = iw * s, ih * s
+        x0 = cx - dw / 2 + self._pan[0]
+        y0 = cy - dh / 2 + self._pan[1]
+        vx0, vy0 = max(0.0, x0), max(0.0, y0)
+        vx1, vy1 = min(float(W), x0 + dw), min(float(H - 40), y0 + dh)
+        if vx1 - vx0 < 1 or vy1 - vy0 < 1:
+            return
+        box = (max(0, int((vx0 - x0) / s)), max(0, int((vy0 - y0) / s)),
+               min(iw, int((vx1 - x0) / s + 0.5)), min(ih, int((vy1 - y0) / s + 0.5)))
+        if box[2] <= box[0] or box[3] <= box[1]:
+            return
+        tw, th = max(1, int(vx1 - vx0)), max(1, int(vy1 - vy0))
+        crop = img.crop(box)
+        if crop.size != (tw, th):
+            crop = crop.resize((tw, th), Image.LANCZOS)
+        self.photo = _pil_to_photo(crop)
+        self.canvas.create_image(vx0, vy0, image=self.photo, anchor="nw")
+
+    def _update_hint(self):
+        """底部提示：放大时优先显示比例，其余情况维持原有说明。"""
+        if self.zoom > 1.001:
+            self.hint.set(f"缩放 {int(round(self.zoom * 100))}% · 滚轮缩放 · 按住拖动")
+        elif self.motion:
+            self.hint.set("● 动态照片 · 按住图片看动的那段")
+        elif self._fallback_hint:
+            self.hint.set("● 系统解码器预览")
+        else:
+            self.hint.set("")
+
+    def _load_image(self, it, box):
+        """读一张静态图 → (PIL 原图, 是否系统解码器)。读不出来时图为 None。"""
+        from PIL import Image, ImageOps
+        try:
+            with Image.open(it["path"]) as fh:
+                im = ImageOps.exif_transpose(fh)
+                im.load()
+            return im, False
+        except Exception as exc:      # noqa: BLE001
+            library.log_error("大图显示", it["path"], exc)
+            # Pillow 解不开不代表这张图废了：HEIC/HEIF 要系统解码器（见 library.thumb）
+            try:
+                im = shellthumb.frame(it["path"], max(box, 1))
+            except Exception:         # noqa: BLE001
+                im = None
+            return im, im is not None
 
     def _bar_hit(self, x, y):
         """鼠标是不是落在进度条上。条只有 4px 高，上下各给 8px 容差才点得中。"""
@@ -438,11 +587,11 @@ class Viewer(tk.Toplevel):
         self.info.set(f"{it['path']}     {library.human_size(it['size'])}")
         self.canvas.delete("all")
         self._bar_fill = None            # delete("all") 之后旧引用就失效了
-        self.photo = None                # 下面两条路都可能失败，别让上一张的图留着
+        self.photo = None                # 下面几条路都可能失败，别让上一张的图留着
         online = bool(it.get("online_only"))
         self.motion = (None if (it["is_video"] or online)
                        else library.motion_range(it["path"]))
-        self.hint.set("● 动态照片 · 按住图片看动的那段" if self.motion else "")
+        self._fallback_hint = False
 
         w = max(self.winfo_width() - 160, 120)   # 左右各留 80px 给翻页按钮
         h = max(self.winfo_height() - 100, 120)
@@ -452,6 +601,8 @@ class Viewer(tk.Toplevel):
             # 云盘「按需文件」：本地 0 字节，读它只会等驱动超时报错（错误 362），
             # 所以不试了，直接把情况说清楚 —— 以前这里显示的是一句
             # 「[Errno 22] Invalid argument」，没人看得懂。
+            self._img, self._path = None, None
+            self.hint.set("")
             self.canvas.create_text(
                 cx, cy, justify="center", fill=TEXT_DIM, font=(theme.FAMILY, 11),
                 text="这张图只存在云上，本地没有数据\n\n"
@@ -460,35 +611,26 @@ class Viewer(tk.Toplevel):
                      "点「更多 → 重新扫描」就能看到了。")
             return
         if it["is_video"]:
+            self._img, self._path = None, None
+            self.zoom, self._pan = 1.0, [0.0, 0.0]
             self._play_whole_video()     # 视频文件也在这个窗口里播，不跳系统播放器
             return
-        try:
-            from PIL import Image, ImageOps
-            with Image.open(it["path"]) as im:
-                im = ImageOps.exif_transpose(im)
-                im.thumbnail((w, h))
-                self.photo = _pil_to_photo(im)
-        except Exception as exc:  # noqa: BLE001
-            library.log_error("大图显示", it["path"], exc)
-            # Pillow 解不开不代表这张图废了：HEIC/HEIF 这类格式要系统解码器，
-            # Pillow 不带（库里 13 张「坏图」其实全是它）。Windows Shell 装了对应
-            # 扩展就能解，借它出一张 —— 否则用户只会看到一句 Errno 22 那种天书。
-            try:
-                im = shellthumb.frame(it["path"], max(w, h))
-            except Exception:      # noqa: BLE001
-                im = None
-            if im is not None:
-                im.thumbnail((w, h))
-                self.photo = _pil_to_photo(im)
-                self.hint.set("● 系统解码器预览")
-        if self.photo is not None:
-            self.canvas.create_image(cx, cy, image=self.photo)
-        else:
-            self.canvas.create_text(cx, cy, justify="center", fill="#C88",
-                                    font=(theme.FAMILY, 11),
-                                    text="无法显示这张图片\n"
-                                         "格式不被支持，或者文件已经损坏。\n"
-                                         "（详细原因记在程序旁边的 error.log）")
+        # 换图才重新解码；窗口缩放（Configure 抖动）只按新尺寸重画，不重读文件
+        if it["path"] != self._path:
+            self._path = it["path"]
+            self.zoom, self._pan = 1.0, [0.0, 0.0]
+            self._img, self._fallback_hint = self._load_image(it, max(w, h))
+            if self._img is None:
+                self.hint.set("")
+                self.canvas.create_text(cx, cy, justify="center", fill="#C88",
+                                        font=(theme.FAMILY, 11),
+                                        text="无法显示这张图片\n"
+                                             "格式不被支持，或者文件已经损坏。\n"
+                                             "（详细原因记在程序旁边的 error.log）")
+                return
+        self._clamp_pan(*self._img.size)
+        self._draw_static()
+        self._update_hint()
 
 
 # --------------------------------------------------------------------------
@@ -752,6 +894,9 @@ class App(tk.Tk):
         self.after(80, self._drain)
         self._scan_devices()          # 只认手机；库交给下面那一次扫，别扫两遍
         self.refresh_library()
+        # 每次启动都重扫一遍本机文件：它们随时可能被增删，跨次启动沿用旧列表
+        # 会出现「新存的图看不见、删掉的还挂着」。实测 150 来个文件 0.2 秒。
+        self._ensure_local()
         self.after(220, self._autoselect_first_month)
         # 保存 job id：自动化测试跑在真库上，得能把这声提示取消掉，否则会被模态框卡住
         self._migrate_job = self.after(1400, self._maybe_prompt_migrate)
@@ -1158,7 +1303,7 @@ class App(tk.Tk):
         # 「查看」下拉：全部设备 / 全部（含本机文件）/ 本机文件 / 库里实际出现过的每一台
         devs = sorted({it["device"] for it in self.items})
         self.lib_picker.set_items([ALL_DEVICES, ALL_WITH_LOCAL, library.LOCAL_DEVICE] + devs,
-                                  empty_text=ALL_DEVICES)
+                                  empty_text=ALL_DEVICES, default=library.LOCAL_DEVICE)
         sel = self.lib_picker.value or ALL_DEVICES
         if sel in (ALL_WITH_LOCAL, library.LOCAL_DEVICE):
             self._ensure_local()        # 用到才扫；扫完才有东西可显示
@@ -1176,7 +1321,8 @@ class App(tk.Tk):
             self.shown = [it for it in self.items if it["device"] == sel]
         self.item_index = {id(it): i for i, it in enumerate(self.shown)}
         self.tree_data = library.group_tree(self.shown)
-        self.root_lbl.config(text=("本机文件 · 只读展示，不动电脑上的原文件"
+        # 副标题只留短文案：完整路径太长时会把顶栏按钮挤扁（1000px 宽下实测会）
+        self.root_lbl.config(text=("本机文件 · 只读展示"
                                    if sel == library.LOCAL_DEVICE else self.root_dir))
         self._rebuild_tree()
         if self.tree.selection():          # 换「查看」的设备后网格也要跟着换
@@ -1475,6 +1621,8 @@ class App(tk.Tk):
         it = self.tiles[idx]
         local = it["device"] == library.LOCAL_DEVICE
         PopupMenu(self, [
+            # 复制文件本身（CF_HDROP）：资源管理器里 Ctrl+V 就是一份副本
+            ("复制", lambda: self.copy_tiles([it])),
             ("用系统程序打开", lambda p=it["path"]: os.startfile(p)),
             # 别用 os.system：windowed 程序下会闪一个黑框，路径里的引号也得自己拼
             ("在资源管理器中定位", lambda p=it["path"]: subprocess.Popen(
@@ -1484,6 +1632,14 @@ class App(tk.Tk):
             ("移到回收站" if local else "移到回收站（仅电脑上的副本）",
              lambda: self.recycle_one(idx), "danger"),
         ], event.x_root, event.y_root)
+
+    def copy_tiles(self, items):
+        """把文件放进剪贴板：资源管理器里 Ctrl+V 就能粘出一份副本。"""
+        ok, info = library.copy_to_clipboard([it["path"] for it in items])
+        if not ok:
+            Dialog.error(self, "复制失败", str(info))
+            return
+        self._set_status(f"已复制 {info} 个文件 · 到资源管理器里 Ctrl+V 粘贴副本")
 
     def _remove_item(self, it):
         """从内存索引里摘掉一个条目（本地副本进了回收站后调用，不重扫磁盘）。

@@ -148,25 +148,28 @@ for _ in range(8):
     time.sleep(0.05)
 
 # --------------------------------------------------------------------------
-# 1) 启动时不扫本机（懒扫描），下拉里三个固定入口都在
+# 1) 启动即扫本机（新需求：每次启动都扫一遍，保证文件信息齐全），
+#    下拉里三个固定入口都在
 # --------------------------------------------------------------------------
 
-ok("启动时不扫本机文件（不点就不花这个时间）", scans["n"] == 0)
+ok("启动时就自动扫过本机文件（每次启动都重扫）", scans["n"] >= 1)
 options = [v for v, _ in app.lib_picker._items]
 ok("「查看」下拉有 全部设备 / 全部（含本机文件）/ 本机文件",
    options[:3] == [mod.ALL_DEVICES, mod.ALL_WITH_LOCAL, library.LOCAL_DEVICE])
 ok("下拉里还有库里的设备", "TESTSET" in options)
+ok("默认停在「本机文件」", app.lib_picker.value == library.LOCAL_DEVICE)
 
 # --------------------------------------------------------------------------
 # 2) 切到「本机文件」
 # --------------------------------------------------------------------------
 
+before_pick = scans["n"]
 app.lib_picker._pick(library.LOCAL_DEVICE)
 for _ in range(10):
     app.update()
     time.sleep(0.05)
 
-ok("切过去才扫（懒扫描）", scans["n"] == 1)
+ok("已经扫过就不再重复扫（启动时扫过了）", scans["n"] == before_pick)
 names = [it["name"] for it in app.shown]
 ok("本机文件只收了该收的 3 个", sorted(names) == sorted(
     ["屏幕截图 2024-03-05 101112.png", "cam.jpg", "clip.mp4"]))
@@ -212,7 +215,7 @@ ok("合并视图里两个来源都在",
    {"TESTSET", library.LOCAL_DEVICE} == {it["device"] for it in app.shown})
 stamps = [it["timestamp"] for it in app.shown]
 ok("合并后仍按时间倒序", stamps == sorted(stamps, reverse=True))
-ok("已经扫过就不再扫（走缓存）", scans["n"] == 1)
+ok("已经扫过就不再扫（走缓存）", scans["n"] == before_pick)
 years = sorted(app.tree_data)
 ok(f"合并视图的时间柱跨了两个来源（实际 {years}）",
    years == ["2019", "2022", "2023", "2024"])
@@ -223,7 +226,7 @@ for _ in range(6):
     time.sleep(0.05)
 ok("「全部设备」不混本机文件",
    len(app.shown) == 2 and all(it["device"] == "TESTSET" for it in app.shown))
-ok("切到别的视图也不重扫", scans["n"] == 1)
+ok("切到别的视图也不重扫", scans["n"] == before_pick)
 
 # --------------------------------------------------------------------------
 # 4) 删除口径
