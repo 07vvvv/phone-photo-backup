@@ -418,8 +418,12 @@ LOCAL_SKIP_PARTS = ("emoji", "sysface", "smiley", "emoticon", "sticker",
                     "thumb", "cache", "flashfransfer", "icon", "avator", "avatar",
                     "onlinestatus", "vasupdatesystem", "resource", "temp", "tmp")
 
+# 目录名精确匹配（只比较整段名字，不做子串，免得误伤 "my_extensions_backup" 这类
+# 真实目录）。"extensions" 是浏览器 / CEF 扩展的资源目录（企业微信、钉钉等自带），
+# 里面的 logo、图标 PNG 解压时时间常被写成 1980（DOS 纪元），会冒充「1980 年的照片」。
 LOCAL_SKIP_DIRS = {"appdata", "node_modules", ".git", "__pycache__", ".venv",
-                   "venv", "$recycle.bin", ".gradle", ".npm", ".cache"}
+                   "venv", "$recycle.bin", ".gradle", ".npm", ".cache",
+                   "extensions"}
 
 _EXIF_TIME_TAGS = (36867, 36868)     # DateTimeOriginal / DateTimeDigitized
 

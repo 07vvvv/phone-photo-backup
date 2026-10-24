@@ -74,6 +74,9 @@ p_clip = mk(r"Videos\clip.mp4", (30, 30, 200), when_ts=ts(2023, 1, 2))
 mk(r"Downloads\temp\垃圾.jpg", when_ts=ts(2024, 1, 1))
 mk(r"Documents\Tencent Files\1\nt_qq\nt_data\Pic\2025-01\Thumb\qq.jpg", when_ts=ts(2024, 1, 1))
 mk(r"Documents\WXWork\Emoji\e.jpg", when_ts=ts(2024, 1, 1))
+# 企业微信自带浏览器扩展的图标资源：目录名 Extensions，解压时文件时间变成 1980
+# （DOS 纪元）。以前 10 个这样的 PNG 会冒充「1980 年的照片」混进相册。
+mk(r"Documents\WXWork\Default\Extensions\ncenn\3.5\assets\logo.png", when_ts=ts(1980, 1, 1))
 with open(os.path.join(HOME_DIR, "Pictures", "note.txt"), "w") as fh:
     fh.write("ignore me")
 
@@ -176,6 +179,10 @@ ok("本机文件只收了该收的 3 个", sorted(names) == sorted(
 ok("QQ 目录整个不要", all("Tencent Files" not in it["path"] for it in app.shown))
 ok("表情包/临时目录不要", all(("Emoji" not in it["path"] and "\\temp\\" not in it["path"])
                               for it in app.shown))
+ok("浏览器扩展资源目录（Extensions）不要",
+   all("\\Extensions\\" not in it["path"] for it in app.shown))
+ok("没有 1980 这类 DOS 纪元时间冒充的照片",
+   all(it["year"] != "1980" for it in app.shown))
 ok("device 是伪设备名", all(it["device"] == library.LOCAL_DEVICE for it in app.shown))
 ok("有 EXIF 的用拍摄时间（2022-07-08，不是文件时间 2025）",
    next(it for it in app.shown if it["name"] == "cam.jpg")["day"] == "2022-07-08")
