@@ -1,0 +1,28 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ---- 构建产物（可由 PhonePhotoBackup.spec 重新生成）----
+build/
+dist/
+
+# ---- 运行时产物与个人数据（绝不入库）----
+config.json
+error.log
+motion-check.log
+*.log
+.adbtmp/
+.pulltmp/
+.thumbcache/
+
+# ---- 自检 / 测试产生的临时目录与截图 ----
+_selfcheck_tmp/
+_libcheck/
+_wtest/
+dev/_uitest/
+dev/_uitest_config.json
+dev/_localtest_home/
+dev/_localtest_lib/
+dev/_renametest/
+dev/_*.png
