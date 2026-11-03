@@ -395,6 +395,15 @@ class Tour:
 
     def show(self):
         self.render(0)
+        # 分层窗口（WS_EX_LAYERED）里用 create_window 嵌进去的子控件，鼠标命中并不可靠 ——
+        # 实测点卡片上的按钮，事件会直接穿到主界面的缩略图上。CardWindow 之所以没这问题，
+        # 是因为它 show() 里抓了本地 grab。这里照做：引导期间所有点击都进内容层。
+        self.layer.update_idletasks()
+        try:
+            self.layer.grab_set()
+            self.layer.focus_force()
+        except tk.TclError:
+            pass
 
     def next(self):
         if self.i < len(self.steps) - 1:
@@ -419,6 +428,10 @@ class Tour:
             except tk.TclError:
                 pass
             self._job = None
+        try:
+            self.layer.grab_release()
+        except tk.TclError:
+            pass
         for win in (self.veil, self.layer):
             try:
                 win.destroy()
