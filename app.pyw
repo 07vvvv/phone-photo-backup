@@ -24,6 +24,7 @@ import library
 import mfplay
 import shellthumb
 import theme
+import welcome
 import wireless
 from theme import BG, BORDER, BORDER_SOFT, SURFACE, SURFACE_ALT, TEXT, TEXT_DIM, TEXT_FAINT
 from theme import DevicePicker, Dialog, PopupMenu, RoundButton, round_rect
@@ -881,6 +882,7 @@ class App(tk.Tk):
         self._suppress_select = False  # 程序性恢复选中时别重复重画网格
         self._thumb_thread = None
         self.q = queue.Queue()
+        self._tour = None          # 新手指引的窗口（同一时刻只能有一个）
 
         self._init_style()
         self._build_ui()
@@ -900,6 +902,8 @@ class App(tk.Tk):
         self.after(220, self._autoselect_first_month)
         # 保存 job id：自动化测试跑在真库上，得能把这声提示取消掉，否则会被模态框卡住
         self._migrate_job = self.after(1400, self._maybe_prompt_migrate)
+        # 新手指引：排在迁移提示之前，第一次用时自动走一遍（800ms 等界面先画稳）
+        self.after(800, self._maybe_show_tour)
 
     # ---------------- 样式 ----------------
 
@@ -974,7 +978,7 @@ class App(tk.Tk):
                                        on_pick=lambda _v: self._rebuild_library_view())
         self.lib_picker.pack(side="left")
 
-        dev = tk.Frame(right, bg=BG)
+        dev = self.dev_box = tk.Frame(right, bg=BG)
         dev.pack(side="right", padx=(0, theme.S2))
         tk.Label(dev, text="连接", font=theme.F_TINY, bg=BG, fg=TEXT_FAINT).pack(
             side="left", padx=(0, theme.S1))
@@ -1008,7 +1012,7 @@ class App(tk.Tk):
         paned.pack(fill="both", expand=True)
 
         # 左：年月导航
-        nav = tk.Frame(paned, bg=BG, width=248)
+        nav = self.nav_card = tk.Frame(paned, bg=BG, width=248)
         nav.pack_propagate(False)
         nav_card = tk.Frame(nav, bg=BG, highlightthickness=1,
                             highlightbackground=BORDER_SOFT)
@@ -1150,9 +1154,37 @@ class App(tk.Tk):
         self.dev_labels.clear()
         self._scan_devices()
 
+    # ---------------- 新手指引 ----------------
+
+    def _maybe_show_tour(self):
+        """只在第一次用时自动走一遍；走过就记在 config 里，不再打扰。"""
+        if self._tour is not None:
+            return
+        if load_config().get("tour_done"):
+            return
+        self.show_tour()
+
+    def show_tour(self):
+        """「更多 ▾ → 使用指引」随时能重看，所以单独开一个入口。"""
+        if self._tour is not None:
+            return
+        self._tour = welcome.Tour(
+            self,
+            {"dev": self.dev_box, "backup": self.backup_btn,
+             "more": self.more_btn, "nav": self.nav_card},
+            on_done=self._tour_done)
+        self._tour.show()
+
+    def _tour_done(self):
+        self._tour = None
+        cfg = load_config()
+        cfg["tour_done"] = 1
+        save_config(cfg)
+
     def _open_more(self):
         """把不常用的几个动作收进这里，给顶栏腾地方。"""
         PopupMenu(self, [
+            ("使用指引", self.show_tour),
             ("重新扫描本地库", self.refresh_library),
             ("更改备份目录…", self.choose_root),
             ("打开备份目录", self.open_root),
