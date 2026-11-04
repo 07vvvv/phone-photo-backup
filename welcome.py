@@ -130,6 +130,8 @@ class Tour:
         self._job = None
         self._last_geo = None
         self._closed = False
+        self._shown = False
+        self._watch_job = None
         self._build()
 
     # ---------- 建立两层 ----------
@@ -144,6 +146,7 @@ class Tour:
 
         self.veil = tk.Toplevel(self.master)
         self.veil.overrideredirect(True)
+        self.veil.transient(self.master)   # 让系统带着一起最小化/恢复（见 _watch 注释）
         self.veil.geometry(geo)
         self.veil.configure(bg=MAGIC)
         self.veil.attributes("-transparentcolor", MAGIC)
@@ -154,6 +157,7 @@ class Tour:
 
         self.layer = tk.Toplevel(self.master)
         self.layer.overrideredirect(True)
+        self.layer.transient(self.master)  # 同上
         self.layer.geometry(geo)
         self.layer.configure(bg=MAGIC)
         self.layer.attributes("-transparentcolor", MAGIC)
@@ -179,6 +183,25 @@ class Tour:
             win.bind("<Escape>", lambda e: self.close())
 
     # ---------- 跟随主窗口 ----------
+
+    def _watch(self):
+        """每 400ms 看一眼主窗口状态。
+
+        两层是独立顶层窗口，不跟着主窗口一起最小化，会单独飘在桌面上。
+        正解是 _build 里的 `transient(master)` —— 由系统带着一起最小化/恢复。
+        这里再兜一层轮询，防的是「最小化到托盘」这类 transient 也管不到的情况。
+        （另两条路都试过不行：`<Unmap>` 在 Windows 上不为最小化触发；
+        withdraw + deiconify 恢复后分层窗口的 -alpha 会被冲掉，遮罩再也画不出来。）
+        """
+        if self._closed:
+            return
+        try:
+            if self.master.state() == "iconic":
+                self.close()
+                return
+        except tk.TclError:
+            return
+        self._watch_job = self.master.after(400, self._watch)
 
     def _on_master_destroy(self, ev):
         """主窗口被关掉时别让 after 回调继续动已销毁的窗口。"""
@@ -394,6 +417,7 @@ class Tour:
         self.layer.lift()
 
     def show(self):
+        self._shown = True
         self.render(0)
         # 分层窗口（WS_EX_LAYERED）里用 create_window 嵌进去的子控件，鼠标命中并不可靠 ——
         # 实测点卡片上的按钮，事件会直接穿到主界面的缩略图上。CardWindow 之所以没这问题，
@@ -404,6 +428,7 @@ class Tour:
             self.layer.focus_force()
         except tk.TclError:
             pass
+        self._watch()          # 主窗口最小化时自动收掉（见 _watch 的注释）
 
     def next(self):
         if self.i < len(self.steps) - 1:
@@ -428,6 +453,12 @@ class Tour:
             except tk.TclError:
                 pass
             self._job = None
+        if self._watch_job:
+            try:
+                self.master.after_cancel(self._watch_job)
+            except tk.TclError:
+                pass
+            self._watch_job = None
         try:
             self.layer.grab_release()
         except tk.TclError:

@@ -1156,11 +1156,16 @@ class App(tk.Tk):
 
     # ---------------- 新手指引 ----------------
 
-    def _maybe_show_tour(self):
+    def _maybe_show_tour(self, tries=0):
         """只在第一次用时自动走一遍；走过就记在 config 里，不再打扰。"""
         if self._tour is not None:
             return
         if load_config().get("tour_done"):
+            return
+        # 已经开着模态框（比如启动时的迁移提示）就先让开：Tk 的本地 grab 只有一个，
+        # 谁后抓谁生效 —— 硬弹上去只会把自己的按钮抓得失灵。最多等 10 秒。
+        if self.grab_current() is not None and tries < 20:
+            self.after(500, lambda: self._maybe_show_tour(tries + 1))
             return
         self.show_tour()
 
