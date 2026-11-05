@@ -100,7 +100,7 @@ STEPS = [
     ),
     dict(
         title="不用插线也能备份",
-        target="more",
+        target="wireless",
         pad=6,
         card=(560, 150),
         primary="开始使用",
@@ -108,7 +108,7 @@ STEPS = [
             ("p", "Android 11 及以上可以走 Wi-Fi：手机开「无线调试」→ 点"
                   "「使用配对码配对设备」→ 屏幕上出 6 位数字；电脑上点「无线」"
                   "填进去配对一次，以后就不插线了。"),
-            ("tip", ("这份指引随时能重看：", "更多 ▾ → 使用指引"), "info"),
+            ("tip", ("这份指引随时能重看：", "点左上角的「新手指引」"), "info"),
         ],
     ),
 ]
@@ -121,7 +121,8 @@ STEPS = [
 
 class Tour:
     def __init__(self, master, targets, on_done=None, steps=None):
-        """targets: {"dev" / "backup" / "more" / "nav": 控件}，对应 STEPS 里的 target。"""
+        """targets: {"dev" / "backup" / "wireless" / "nav" / "tour": 控件}，
+        对应 STEPS 里的 target。首启自动弹与顶栏「新手指引」重看走的是同一个入口。"""
         self.master = master
         self.targets = targets
         self.on_done = on_done

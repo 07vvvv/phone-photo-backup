@@ -954,8 +954,17 @@ class App(tk.Tk):
 
         left = tk.Frame(top, bg=BG)
         left.pack(side="left", anchor="w", padx=(0, theme.S5))   # 窄窗口下也要与右侧留白
-        tk.Label(left, text="手机照片备份", font=theme.F_TITLE, bg=BG,
-                 fg=TEXT).pack(anchor="w")
+
+        head = tk.Frame(left, bg=BG)
+        head.pack(anchor="w")
+        tk.Label(head, text="手机照片备份", font=theme.F_TITLE, bg=BG,
+                 fg=TEXT).pack(side="left")
+        # 常驻入口：随时能把新手指引重看一遍（首次启动还会自动走一次）。
+        # 做小一号、弱一档：它是辅助动作，不能跟右侧「开始备份」抢注意力。
+        self.tour_btn = RoundButton(head, "新手指引", self.show_tour, parent_bg=BG,
+                                    height=26, padx=12, font=theme.F_TINY)
+        self.tour_btn.pack(side="left", padx=(theme.S3, 0), pady=(2, 0))
+
         self.root_lbl = tk.Label(left, text="", font=theme.F_TINY, bg=BG, fg=TEXT_FAINT)
         self.root_lbl.pack(anchor="w", pady=(2, 0))
 
@@ -986,8 +995,9 @@ class App(tk.Tk):
         self.device_picker.pack(side="left")
         RoundButton(dev, "刷新", self.refresh_devices, parent_bg=BG,
                     height=34, padx=14).pack(side="left", padx=(theme.S2, 0))
-        RoundButton(dev, "无线", self.open_wireless, parent_bg=BG,
-                    height=34, padx=14).pack(side="left", padx=(theme.S2, 0))
+        self.wireless_btn = RoundButton(dev, "无线", self.open_wireless, parent_bg=BG,
+                                        height=34, padx=14)
+        self.wireless_btn.pack(side="left", padx=(theme.S2, 0))
 
         # 状态栏（先 pack 底部，主体才能正确 expand）
         bar = tk.Frame(self, bg=SURFACE, height=36)
@@ -1170,13 +1180,14 @@ class App(tk.Tk):
         self.show_tour()
 
     def show_tour(self):
-        """「更多 ▾ → 使用指引」随时能重看，所以单独开一个入口。"""
+        """顶栏「新手指引」随时能重看 —— 首启自动弹的也是这一个。"""
         if self._tour is not None:
             return
         self._tour = welcome.Tour(
             self,
             {"dev": self.dev_box, "backup": self.backup_btn,
-             "more": self.more_btn, "nav": self.nav_card},
+             "nav": self.nav_card, "tour": self.tour_btn,
+             "wireless": self.wireless_btn},
             on_done=self._tour_done)
         self._tour.show()
 
@@ -1189,7 +1200,6 @@ class App(tk.Tk):
     def _open_more(self):
         """把不常用的几个动作收进这里，给顶栏腾地方。"""
         PopupMenu(self, [
-            ("使用指引", self.show_tour),
             ("重新扫描本地库", self.refresh_library),
             ("更改备份目录…", self.choose_root),
             ("打开备份目录", self.open_root),

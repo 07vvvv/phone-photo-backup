@@ -58,7 +58,16 @@ class Host(tk.Tk):
         top = tk.Frame(self, bg=BG, height=72)
         top.pack(fill="x", padx=S5, pady=(S4, S3))
         top.pack_propagate(False)
-        tk.Label(top, text="手机照片备份", font=F_TITLE, bg=BG, fg=TEXT).pack(side="left", anchor="n")
+
+        left = tk.Frame(top, bg=BG)
+        left.pack(side="left", anchor="w")
+        head = tk.Frame(left, bg=BG)
+        head.pack(anchor="w")
+        self.title_lbl = tk.Label(head, text="手机照片备份", font=F_TITLE, bg=BG, fg=TEXT)
+        self.title_lbl.pack(side="left")
+        self.tour_btn = RoundButton(head, "新手指引", None, parent_bg=BG,
+                                    height=26, padx=12, font=F_TINY)
+        self.tour_btn.pack(side="left", padx=(S3, 0), pady=(2, 0))
 
         right = tk.Frame(top, bg=BG)
         right.pack(side="right", anchor="n")
@@ -81,8 +90,9 @@ class Host(tk.Tk):
         dp.set_items(["REDMI-K80-Ultra"], default="REDMI-K80-Ultra")
         RoundButton(self.dev_box, "刷新", None, parent_bg=BG,
                     height=34, padx=14).pack(side="left", padx=(S2, 0))
-        RoundButton(self.dev_box, "无线", None, parent_bg=BG,
-                    height=34, padx=14).pack(side="left", padx=(S2, 0))
+        self.wireless_btn = RoundButton(self.dev_box, "无线", None, parent_bg=BG,
+                                        height=34, padx=14)
+        self.wireless_btn.pack(side="left", padx=(S2, 0))
 
         bar = tk.Frame(self, bg=SURFACE, height=36)
         bar.pack(side="bottom", fill="x")
@@ -125,8 +135,28 @@ def main():
     done = {"n": 0}
     tour = welcome.Tour(app,
                         {"dev": app.dev_box, "backup": app.backup_btn,
-                         "more": app.more_btn, "nav": app.nav_card},
+                         "nav": app.nav_card, "tour": app.tour_btn,
+                         "wireless": app.wireless_btn},
                         on_done=lambda: done.update(n=done["n"] + 1))
+
+    # ---- 0. 顶栏常驻入口「新手指引」 ----
+    app.update()
+    tx, ty, tw, th = box_of(app.tour_btn, app)
+    lx, ly, lw, lh = box_of(app.title_lbl, app)
+    ok("顶栏有这个按钮（RoundButton 实例）", isinstance(app.tour_btn, RoundButton))
+    ok("按钮与标题同一行、紧随标题右侧",
+       tx >= lx + lw and tx - (lx + lw) <= 24 and abs((ty + th / 2.0) - (ly + lh / 2.0)) <= 6,
+       "按钮=(%d,%d,%d,%d) 标题右=%d" % (tx, ty, tw, th, lx + lw))
+    ok("按钮比主按钮小一号（辅助动作不抢注意力）",
+       th < app.backup_btn.winfo_height() and tw < app.backup_btn.winfo_width(),
+       "指引 %sx%s vs 备份 %sx%s" % (tw, th, app.backup_btn.winfo_width(),
+                                     app.backup_btn.winfo_height()))
+    ok("按钮在顶栏内（没有掉到主体区）", ty < 100)
+
+    clicks = {"n": 0}
+    app.tour_btn._cmd = lambda: clicks.update(n=clicks["n"] + 1)
+    app.tour_btn._release(type("E", (), {"x": tw // 2, "y": th // 2})())
+    ok("点按钮会触发它的命令（重看入口接得上）", clicks["n"] == 1)
 
     # ---- 1. 两层窗口尺寸与主窗口一致 ----
     app.update()
@@ -146,10 +176,11 @@ def main():
     # ---- 3. 四步高亮都精确套住目标控件 ----
     tour.show()
     app.update()
-    cases = [("dev", 8), ("backup", 6), ("nav", 0), ("more", 6)]
+    cases = [("dev", 8), ("backup", 6), ("nav", 0), ("wireless", 6), ("tour", 6)]
     for key, pad in cases:
         wdg = {"dev": app.dev_box, "backup": app.backup_btn,
-               "nav": app.nav_card, "more": app.more_btn}[key]
+               "nav": app.nav_card, "wireless": app.wireless_btn,
+               "tour": app.tour_btn}[key]
         bx, by, bw, bh = box_of(wdg, app)
         hole = tour._target_box(key, pad)
         if hole is None:
@@ -190,6 +221,17 @@ def main():
        tour.veil.winfo_width() == app.winfo_width(),
        "%s vs %s" % (tour.veil.winfo_width(), app.winfo_width()))
 
+    # 顶栏多了一个控件，得确认最窄时不会把右侧那排挤出去
+    app.update()
+    bx2, _, bw2, _ = box_of(app.backup_btn, app)
+    ok("最窄窗口（1000）下「开始备份」仍完整可见",
+       bx2 + bw2 <= app.winfo_width() - S5 + 2,
+       "主按钮右边界=%d，窗口宽=%d" % (bx2 + bw2, app.winfo_width()))
+    tx2, _, tw2, th2 = box_of(app.tour_btn, app)
+    ok("最窄窗口下顶部入口仍完整可见",
+       tw2 > 0 and tx2 + tw2 <= app.winfo_width() - S5 + 2,
+       "入口=(%d,%d) 宽=%d，窗口宽=%d" % (tx2, th2, tw2, app.winfo_width()))
+
     # ---- 7. 目标不可见时降级 ----
     hole_none = tour._target_box("no_such_key", 6)
     ok("未知目标返回 None（降级为整屏压暗）", hole_none is None)
@@ -206,8 +248,11 @@ def main():
        all(s.get("title") and s.get("body") and s.get("primary")
            for s in welcome.STEPS))
     ok("步骤里的 target 都能在 targets 里找到",
-       all(s.get("target") in (None, "dev", "backup", "more", "nav")
+       all(s.get("target") in (None, "dev", "backup", "wireless", "nav", "tour")
            for s in welcome.STEPS))
+    ok("最后一步的文案指向顶栏入口（改名时不会漂移）",
+       "新手指引" in str(welcome.STEPS[-1]),
+       "第 5 步正文里没出现「新手指引」四个字")
 
     app.destroy()
     print("\n共 %d 项，失败 %d 项" % (len(PASS) + len(FAIL), len(FAIL)))
