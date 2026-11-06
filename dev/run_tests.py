@@ -26,6 +26,7 @@ ROOT = os.path.dirname(HERE)
 
 # (显示名, 参数, 说明, 超时秒)
 CORE = [
+    ("隐私门禁", ["dev/privacy_check.py"], "用户名 / 用户目录 / 真实机型 / 私网 IP / 图片入库 / 历史残留", 120),
     ("backup 自检", ["backup.py", "--selfcheck"], "清单解析 / 分类 / 判重 / 掉线护栏 / 只读约束", 180),
     ("wireless 自检", ["wireless.py"], "mDNS 解析 / 地址整理 / pair·connect 判据", 120),
     ("library 自检", ["library.py"], "归档树 / 缩略图缓存 / 动图 / 本机扫描 / 云盘占位", 180),

@@ -528,8 +528,8 @@ def selfcheck():
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_libcheck")
     shutil.rmtree(base, ignore_errors=True)
     old_dir = os.path.join(base, "2024", "2024-03-15")                 # 老结构
-    cam_dir = os.path.join(base, "REDMI-K80-Ultra", "Camera", "2024", "2024-03-15")
-    oth_dir = os.path.join(base, "REDMI-K80-Ultra", "Other", "2024", "2024-03-16")
+    cam_dir = os.path.join(base, "Pixel-8-Pro", "Camera", "2024", "2024-03-15")
+    oth_dir = os.path.join(base, "Pixel-8-Pro", "Other", "2024", "2024-03-16")
     for d in (old_dir, cam_dir, oth_dir, os.path.join(base, THUMB_DIR, "aa")):
         os.makedirs(d, exist_ok=True)
     try:
@@ -560,21 +560,21 @@ def selfcheck():
 
         cam = by_name["IMG_20240315_101533.jpg"]
         ok("新结构：设备和类别都解析出来",
-           cam["device"] == "REDMI-K80-Ultra" and cam["category"] == "Camera"
+           cam["device"] == "Pixel-8-Pro" and cam["category"] == "Camera"
            and cam["year"] == "2024" and cam["day"] == "2024-03-15")
         oth = by_name["wx_camera_1713514261465.jpg"]
         ok("新结构：Other 类也认",
-           oth["device"] == "REDMI-K80-Ultra" and oth["category"] == "Other"
+           oth["device"] == "Pixel-8-Pro" and oth["category"] == "Other"
            and oth["day"] == "2024-03-16")
 
         ok("能列出库里的设备",
-           sorted({it["device"] for it in items}) == ["REDMI-K80-Ultra", LEGACY_DEVICE])
+           sorted({it["device"] for it in items}) == ["Pixel-8-Pro", LEGACY_DEVICE])
         ok("能列出库里的类别",
            sorted({it["category"] for it in items}) == ["Camera", "Other", UNKNOWN_CATEGORY])
 
         tree = group_tree(items)
         ok("分组树结构正确", "2024" in tree and "2024-03" in tree["2024"])
-        only_cam = group_tree([it for it in items if it["device"] == "REDMI-K80-Ultra"])
+        only_cam = group_tree([it for it in items if it["device"] == "Pixel-8-Pro"])
         ok("按设备筛完再分组（多设备视图就是这么做的）",
            list(only_cam) == ["2024"] and len(only_cam["2024"]["2024-03"]) == 2)
 

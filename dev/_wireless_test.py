@@ -86,7 +86,7 @@ real_sub = backup.subprocess
 real_alive = backup.device_alive
 real_poll = backup.POLL_SECONDS
 real_timeout = backup.PULL_TIMEOUT
-WIRELESS_SERIAL = "192.168.31.100:37001"
+WIRELESS_SERIAL = "192.0.2.100:37001"
 
 try:
     fake = FakeSub()
@@ -353,7 +353,7 @@ app.open_wireless = lambda: opened.append(True)
 # 一台设备掉线：只终止它自己，并且弹同风格的告警框
 app.busy = True
 app._handle(("backup_all_done", [
-    {"serial": WIRELESS_SERIAL, "dir": "REDMI-K80-Ultra", "label": "REDMI K80 Ultra",
+    {"serial": WIRELESS_SERIAL, "dir": "Pixel-8-Pro", "label": "Pixel 8 Pro",
      "summary": None, "error": "手机连接断开了，备份已中止。", "lost": True},
 ]))
 ok("掉线后解除忙碌、按钮恢复可用", app.busy is False)
@@ -364,7 +364,7 @@ ok("点「重新连接」会打开无线面板", opened == [True])
 picked.clear()
 app.busy = True
 app._handle(("backup_all_done", [
-    {"serial": "A:1", "dir": "REDMI-A", "label": "手机A", "summary": None,
+    {"serial": "A:1", "dir": "Demo-A", "label": "手机A", "summary": None,
      "error": "断开了", "lost": True},
     {"serial": "B:1", "dir": "samsung-S24", "label": "手机B",
      "summary": {"pulled": 7, "skipped": 3, "failed": 0, "errors": []},

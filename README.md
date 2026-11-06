@@ -102,7 +102,7 @@
 ### 以后：点一下就连
 
 手机把「无线调试」开着，电脑点「无线」→「连接」即可（先点「重新发现」让它自己找也行）。
-连上之后设备下拉框里会出现 `192.168.31.100:37001` 这样的条目，后面的「开始备份」和有线完全一样。
+连上之后设备下拉框里会出现 `192.0.2.100:37001` 这样的条目，后面的「开始备份」和有线完全一样。
 
 ### 为什么要点「重新发现」
 
@@ -177,10 +177,10 @@ Android 11+ 的**配对端口和连接端口不是同一个，而且每次开关
 ### 靠什么认出「这是同一台手机」
 
 用手机自己的 `android_id`（`adb shell settings get secure android_id`），**不是 USB 序列号**。
-因为同一台手机 USB 插着叫 `BQEYBIM7V4ZH4LDA`、无线连着叫 `192.168.1.5:37001`，
+因为同一台手机 USB 插着叫 `ABCD1234EFGH5678`、无线连着叫 `192.0.2.5:37001`，
 序列号完全对不上，只有 `android_id` 永远不变。
 
-目录名取自手机的市场名（`ro.product.marketname`）：`REDMI K80 Ultra` → `REDMI-K80-Ultra`。
+目录名取自手机的市场名（`ro.product.marketname`）：`Pixel 8 Pro` → `Pixel-8-Pro`。
 想换名字走 **更多 → 重命名设备目录…** —— 改完应用会记住，下次备份不会另建一个旧名字的目录。
 
 ### 从老结构升级过来
@@ -366,7 +366,7 @@ iPhone 和部分安卓默认拍 HEIC。Pillow 不自带这个解码器，所以�
 ```
 <备份目录>\                       ← 第一次运行会让你选；点取消就用「图片\PhonePhotos」
                                   ← 之后「更多 → 更改备份目录」随时可改
-├── REDMI-K80-Ultra\             ← 每台手机一个目录（名字取自手机，可以改）
+├── Pixel-8-Pro\             ← 每台手机一个目录（名字取自手机，可以改）
 │   ├── Camera\2024\2024-03-15\IMG_20240315_101533.jpg
 │   ├── Screenshots\2024\2024-03-15\Screenshot_2024-03-15-10-00-00.jpg
 │   ├── ScreenRecorder\2025\2025-01-02\screenrec_20250102.mp4
@@ -567,8 +567,20 @@ python dev\make_share_zip.py     # 产出 dist\手机照片备份-分享包.zip
 
 ---
 
-**版本控制**：仓库已 `git init`（纯本地，没推远程）。`.gitignore` 排除了 `build/`、`dist/`、
-缩略图缓存、日志，以及 `config.json`（里面有设备 `android_id` 和型号，属个人数据）。
-改完代码 `git add -A && git commit -m "说明"` 即可；出问题能直接 `git checkout` 回到上一版。
+**版本控制与发布**：源码在 <https://github.com/07vvvv/phone-photo-backup>，
+exe 与分享包放在该仓库的 Releases 里 —— 二进制不进 git 历史。
+
+`.gitignore` 排除了 `build/`、`dist/`、缩略图缓存、日志，以及 `config.json`
+（里面有设备 `android_id` 和型号，属个人数据）。改完代码 `git add -A && git commit -m "说明"` 即可。
+
+**上传前先过隐私门禁**：
+
+```powershell
+python dev\privacy_check.py
+```
+
+它扫一遍已跟踪文件与**全部提交历史**，确认没有用户名、用户目录、真实机型、私网 IP、
+图片、`config.json` / `error.log` 残留，19 项全过才推 —— 截图、日志这类东西一旦进过一次
+提交，光删文件是删不掉的，历史里永远翻得到。
 
 > 注意：`onefile` 版 exe 依赖「父进程解包 + 子进程运行」机制，在**受限沙箱环境**里会启动即退出；正常桌面双击运行不受影响。

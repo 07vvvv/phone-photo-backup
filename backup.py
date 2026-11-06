@@ -174,7 +174,7 @@ class DeviceLost(RuntimeError):
 def list_devices(timeout=30):
     """返回 [(serial, state)]，state 通常是 device / unauthorized / offline。
 
-    无线设备在这里长得就是 `192.168.31.100:37001`，和 USB 序列号一视同仁。
+    无线设备在这里长得就是 `192.0.2.100:37001`，和 USB 序列号一视同仁。
     """
     rc, out, err = run_adb(["devices"], timeout=timeout)
     if rc != 0:
@@ -247,8 +247,8 @@ _DEVICE_PROPS = ("ro.product.marketname", "ro.product.brand", "ro.product.model"
 def device_info(serial, timeout=60):
     """读设备身份：市场名 / 品牌 / 型号 / android_id。
 
-    android_id 是关键 —— 同一台手机 USB 插着叫 `BQEYBIM7V4ZH4LDA`，无线连着叫
-    `192.168.1.5:37001`，serial 完全对不上，但 android_id 永远一样。
+    android_id 是关键 —— 同一台手机 USB 插着叫 `ABCD1234EFGH5678`，无线连着叫
+    `192.0.2.5:37001`，serial 完全对不上，但 android_id 永远一样。
     靠它才能判断「这回连的还是上次那台」，进而决定照片落进哪个设备目录。
     """
     info = {}
@@ -275,7 +275,7 @@ def _useful(value):
 
 
 def device_label(info):
-    """给人看的名字：优先市场名（`REDMI K80 Ultra`），退回「品牌 型号」。"""
+    """给人看的名字：优先市场名（`Pixel 8 Pro`），退回「品牌 型号」。"""
     if _useful(info.get("marketname")):
         return info["marketname"].strip()
     label = f"{(info.get('brand') or '').strip()} {(info.get('model') or '').strip()}".strip()
@@ -283,7 +283,7 @@ def device_label(info):
 
 
 def device_dir_name(info, fallback="device"):
-    """目录名：把市场名改成英文安全形式（`REDMI K80 Ultra` → `REDMI-K80-Ultra`）。
+    """目录名：把市场名改成英文安全形式（`Pixel 8 Pro` → `Pixel-8-Pro`）。
 
     保留中文（个别品牌可能返回中文名），但要是转完连一个 ASCII 字母数字都没有
     （比如拿到的是「未知设备」），就用英文兜底名，免得目录名整个是中文或空的。
@@ -694,7 +694,7 @@ def pull_one(serial, remote, dest, watchdog=True):
 def do_backup(root, serial=None, on_event=None, dry_run=False, device_dir=None):
     """执行备份。on_event(kind, payload) 用于向 UI/控制台报进度。
 
-    device_dir 是这台设备的目录名（如 `REDMI-K80-Ultra`）；给 None 时退回老结构。
+    device_dir 是这台设备的目录名（如 `Pixel-8-Pro`）；给 None 时退回老结构。
     """
     def emit(kind, payload=None):
         if on_event:
@@ -948,7 +948,7 @@ def selfcheck():
        classify_by_name("-1e644450a15163a4.jpg") == CATEGORY_OTHER)
 
     ok("市场名转目录名",
-       device_dir_name({"marketname": "REDMI K80 Ultra"}) == "REDMI-K80-Ultra")
+       device_dir_name({"marketname": "Pixel 8 Pro"}) == "Pixel-8-Pro")
     ok("没有市场名退回「品牌 型号」",
        device_label({"brand": "samsung", "model": "SM-S9180"}) == "samsung SM-S9180")
     ok("什么都没有也不炸",
@@ -958,9 +958,9 @@ def selfcheck():
 
     # 9) 新落盘结构
     cands = candidate_paths(r"D:\backup", _dt.datetime(2024, 3, 15), "a.jpg",
-                            device="REDMI-K80-Ultra", category=CATEGORY_CAMERA)
+                            device="Pixel-8-Pro", category=CATEGORY_CAMERA)
     ok("按 设备/类别/年/日 分层",
-       cands[0] == os.path.join(r"D:\backup", "REDMI-K80-Ultra", "Camera",
+       cands[0] == os.path.join(r"D:\backup", "Pixel-8-Pro", "Camera",
                                 "2024", "2024-03-15", "a.jpg"))
     ok("老结构仍然可选（不传设备/类别）",
        candidate_paths(r"D:\backup", _dt.datetime(2024, 3, 15), "a.jpg")[0]
@@ -982,36 +982,36 @@ def selfcheck():
         ok("全局去重索引认得库里的文件",
            len(idx) == 3 and ("IMG_20240315_101533.jpg", 10) in idx)
 
-        moves = plan_migration(mroot, "REDMI-K80-Ultra")
+        moves = plan_migration(mroot, "Pixel-8-Pro")
         cats = {}
         for _s, _d, c in moves:
             cats[c] = cats.get(c, 0) + 1
         ok("迁移计划算出 3 个文件", len(moves) == 3)
         ok("按文件名分别归到 Camera / Screenshots / Other",
            cats == {CATEGORY_CAMERA: 1, CATEGORY_SHOTS: 1, CATEGORY_OTHER: 1})
-        ok("目标路径带设备目录", all("REDMI-K80-Ultra" in d for _s, d, _c in moves))
+        ok("目标路径带设备目录", all("Pixel-8-Pro" in d for _s, d, _c in moves))
 
         done, errors, _removed = apply_migration(moves)
         ok("迁移搬走 3 个且无错误", done == 3 and not errors)
         ok("搬空的老日期目录被清掉",
            not os.path.exists(os.path.join(mroot, "2024", "2024-03-15")))
         ok("文件都落在新结构里", all(os.path.isfile(d) for _s, d, _c in moves))
-        with open(os.path.join(mroot, "REDMI-K80-Ultra", "Camera", "2024", "2024-03-15",
+        with open(os.path.join(mroot, "Pixel-8-Pro", "Camera", "2024", "2024-03-15",
                                "IMG_20240315_101533.jpg"), "rb") as fh:
             ok("搬完内容一字不差", fh.read() == b"x" * 10)
 
         # 已经在新结构里的文件不该被再迁一次
-        again = plan_migration(mroot, "REDMI-K80-Ultra")
+        again = plan_migration(mroot, "Pixel-8-Pro")
         ok("新结构不会被重复迁移",
-           all(not s.startswith(os.path.join(mroot, "REDMI-K80-Ultra"))
+           all(not s.startswith(os.path.join(mroot, "Pixel-8-Pro"))
                for s, _d, _c in again))
 
         # 目标已存在 → 绝不覆盖
         os.makedirs(old, exist_ok=True)
         with open(os.path.join(old, "IMG_20240315_101533.jpg"), "wb") as fh:
             fh.write(b"NEW")
-        done2, errors2, _ = apply_migration(plan_migration(mroot, "REDMI-K80-Ultra"))
-        with open(os.path.join(mroot, "REDMI-K80-Ultra", "Camera", "2024", "2024-03-15",
+        done2, errors2, _ = apply_migration(plan_migration(mroot, "Pixel-8-Pro"))
+        with open(os.path.join(mroot, "Pixel-8-Pro", "Camera", "2024", "2024-03-15",
                                "IMG_20240315_101533.jpg"), "rb") as fh:
             kept = fh.read()
         ok("目标已存在 → 跳过且不覆盖原文件", done2 == 0 and bool(errors2) and kept == b"x" * 10)

@@ -41,7 +41,7 @@ _FAIL_WORDS = ("failed", "cannot", "refused", "unreachable", "unable",
 
 
 def is_wireless(serial):
-    """`192.168.31.100:37001` 这种是无线；`R58M12ABCDE` 这种 USB 序列号不是。"""
+    """`192.0.2.100:37001` 这种是无线；`R58M12ABCDE` 这种 USB 序列号不是。"""
     return bool(_RE_ADDR.match((serial or "").strip()))
 
 
@@ -91,7 +91,7 @@ def _join(out, err, rc):
 
 
 def _parse_mdns_line(line):
-    """`adb-XXXX\\t_adb-tls-connect._tcp\\t192.168.31.100:37001` → (服务类型, 地址)。
+    """`adb-XXXX\\t_adb-tls-connect._tcp\\t192.0.2.100:37001` → (服务类型, 地址)。
 
     表头、别的 app 的服务、没有端口的行一律返回 (None, None)。
     """
@@ -239,43 +239,43 @@ def selfcheck():
     # 1) mDNS 输出解析
     sample = (
         "List of discovered mdns services\n"
-        "adb-3D4F5A6B7C8D\t_adb-tls-connect._tcp\t192.168.31.100:37001\n"
-        "adb-3D4F5A6B7C8D\t_adb-tls-pairing._tcp\t192.168.31.100:41234\n"
-        "some-other-app\t_ipp._tcp\t192.168.31.55:631\n"
+        "adb-3D4F5A6B7C8D\t_adb-tls-connect._tcp\t192.0.2.100:37001\n"
+        "adb-3D4F5A6B7C8D\t_adb-tls-pairing._tcp\t192.0.2.100:41234\n"
+        "some-other-app\t_ipp._tcp\t192.0.2.55:631\n"
     )
     found = collect_services(sample)
-    ok("发现 connect 服务", found["connect"] == ["192.168.31.100:37001"])
-    ok("发现 pairing 服务", found["pairing"] == ["192.168.31.100:41234"])
+    ok("发现 connect 服务", found["connect"] == ["192.0.2.100:37001"])
+    ok("发现 pairing 服务", found["pairing"] == ["192.0.2.100:41234"])
     ok("忽略无关服务与表头", len(found["connect"]) + len(found["pairing"]) == 2)
     ok("重复广播只留一条",
-       collect_services(sample + sample)["connect"] == ["192.168.31.100:37001"])
+       collect_services(sample + sample)["connect"] == ["192.0.2.100:37001"])
     ok("没带端口的行被丢弃",
        _parse_mdns_line("a\t_b._tcp\thost-without-port") == (None, None))
     ok("空输出不炸", collect_services("") == {"connect": [], "pairing": []})
 
     # 2) 无线 / USB 判定
-    ok("识别 ip:port", is_wireless("192.168.31.100:37001"))
+    ok("识别 ip:port", is_wireless("192.0.2.100:37001"))
     ok("识别 IPv6 字面量", is_wireless("[fe80::1]:37001"))
     ok("USB 序列号不算无线", not is_wireless("R58M12ABCDE"))
     ok("空串不算无线", not is_wireless(""))
 
     # 3) 地址整理
-    ok("纯 IP 补默认端口", normalize_addr("192.168.31.100") == "192.168.31.100:5555")
-    ok("已有端口原样保留", normalize_addr("192.168.31.100:37001") == "192.168.31.100:37001")
-    ok("两端空格被去掉", normalize_addr("  192.168.31.100:37001  ") == "192.168.31.100:37001")
+    ok("纯 IP 补默认端口", normalize_addr("192.0.2.100") == "192.0.2.100:5555")
+    ok("已有端口原样保留", normalize_addr("192.0.2.100:37001") == "192.0.2.100:37001")
+    ok("两端空格被去掉", normalize_addr("  192.0.2.100:37001  ") == "192.0.2.100:37001")
     ok("空输入返回空串", normalize_addr("") == "")
 
     # 4) pair / connect 的成功判据（用的是真机输出样例）
-    ok("pair 成功", pair_ok("Successfully paired to 192.168.31.100:41234 [guid=adb-3D4F]"))
+    ok("pair 成功", pair_ok("Successfully paired to 192.0.2.100:41234 [guid=adb-3D4F]"))
     ok("pair 密码错 → 失败", not pair_ok("Failed: Wrong password"))
-    ok("connect 成功", connect_ok("connected to 192.168.31.100:37001"))
-    ok("connect 已连过", connect_ok("already connected to 192.168.31.100:37001"))
+    ok("connect 成功", connect_ok("connected to 192.0.2.100:37001"))
+    ok("connect 已连过", connect_ok("already connected to 192.0.2.100:37001"))
     ok("connect 被拒绝 → 失败",
-       not connect_ok("failed to connect to 192.168.31.100:37001: Connection refused"))
+       not connect_ok("failed to connect to 192.0.2.100:37001: Connection refused"))
     ok("connect 没配对 → 失败",
-       not connect_ok("failed to authenticate to 192.168.31.100:37001"))
+       not connect_ok("failed to authenticate to 192.0.2.100:37001"))
     ok("connect 网络不可达 → 失败",
-       not connect_ok("cannot connect to 192.168.31.100:37001: Network is unreachable"))
+       not connect_ok("cannot connect to 192.0.2.100:37001: Network is unreachable"))
 
     # 5) 本机 adb 真的支持这几个子命令
     try:

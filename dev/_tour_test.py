@@ -87,7 +87,7 @@ class Host(tk.Tk):
                  fg=TEXT_FAINT).pack(side="left")
         dp = theme.DevicePicker(self.dev_box, width=186, height=34, parent_bg=BG)
         dp.pack(side="left", padx=(S1, 0))
-        dp.set_items(["REDMI-K80-Ultra"], default="REDMI-K80-Ultra")
+        dp.set_items(["Pixel-8-Pro"], default="Pixel-8-Pro")
         RoundButton(self.dev_box, "刷新", None, parent_bg=BG,
                     height=34, padx=14).pack(side="left", padx=(S2, 0))
         self.wireless_btn = RoundButton(self.dev_box, "无线", None, parent_bg=BG,
