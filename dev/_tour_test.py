@@ -171,7 +171,8 @@ def main():
     ok("遮罩层带 alpha（半透明压暗）",
        abs(float(tour.veil.attributes("-alpha")) - welcome.VEIL_ALPHA) < 1e-6)
     ok("遮罩层带魔术色透明",
-       tour.veil.attributes("-transparentcolor").lower() == welcome.MAGIC.lower())
+       # 3.12 的 tkinter 这里回的是 Tcl_Obj 而不是 str，统一 str() 一下再比
+       str(tour.veil.attributes("-transparentcolor")).lower() == welcome.MAGIC.lower())
 
     # ---- 3. 四步高亮都精确套住目标控件 ----
     tour.show()
