@@ -20,6 +20,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 import backup
+import dnd
 import library
 import mfplay
 import shellthumb
@@ -38,6 +39,10 @@ ALL_WITH_LOCAL = "全部（含本机文件）"
 THUMB_BOX = 168          # 缩略图最长边
 CELL = THUMB_BOX + 2     # 固定格子边长（含 1px 边框）—— 尺寸统一，网格才立得住
 MAX_TILES = 400          # 单组最多渲染多少格
+
+# 按下后移动多少像素才算「拖动」而不是「点击」。
+# 太小会把普通点击误判成拖动（手抖 1–2px 很常见），太大则框选和拖出的手感发黏。
+DRAG_THRESHOLD = 4
 
 # 一轮消息循环最多上屏多少张缩略图（见 App._drain）—— 限量是为了别把主线程占死
 THUMBS_PER_DRAIN = 24
@@ -878,6 +883,13 @@ class App(tk.Tk):
         self.gen = 0
         self._cols = 4
         self.focus_idx = 0
+        # ---- 多选与拖放（见"多选 / 框选 / 拖出"那一节）----
+        self.sel = set()           # 选中的槽位下标（池子里的固定槽位，不是路径）
+        self.anchor = 0            # Shift 范围选的锚点
+        self._sel_painted = set()  # 上一轮真正画成"选中态"的格子，用来做增量重绘
+        self._press = None         # 左键按下时的 (idx, canvas_x, canvas_y)
+        self._band = None          # 框选矩形（canvas item id）
+        self._ctx = None           # 右键按下时的 [idx, x_root, y_root, 是否已开始拖动]
         self._keep_scroll = False      # 重画时是否保住滚动位置（删除后用）
         self._suppress_select = False  # 程序性恢复选中时别重复重画网格
         self._thumb_thread = None
@@ -1055,6 +1067,12 @@ class App(tk.Tk):
         self.canvas.bind("<Up>", lambda e: self._move_focus(0, -1))
         self.canvas.bind("<Down>", lambda e: self._move_focus(0, 1))
         self.canvas.bind("<Return>", lambda e: self.open_viewer(self.focus_idx))
+        # 多选快捷键。Tk 的 "break" 必须由回调返回才生效，所以 lambda 里取 [1]：
+        # control-a 在 Tk 里是文本控件的"行首"默认绑定，不吃掉它会把焦点抢走。
+        self.canvas.bind("<Control-a>", lambda e: (self.select_all(), "break")[1])
+        self.canvas.bind("<Control-A>", lambda e: (self.select_all(), "break")[1])
+        self.canvas.bind("<Escape>", lambda e: (self.clear_selection(), "break")[1])
+        self.canvas.bind("<space>", lambda e: (self.toggle_at(self.focus_idx), "break")[1])
         paned.add(grid_host, weight=1)
 
         self._set_status("就绪")
@@ -1491,6 +1509,10 @@ class App(tk.Tk):
         缩略图按路径缓存（self.photos），所以重画已在缓存里的组直接命中，不重新解码。
         """
         frac = self.canvas.yview()[0] if keep_scroll else 0.0
+        # 重画会整批换掉 tile_cells，上一轮画过的记录作废；要保住选择就按路径带过去
+        old_paths = ({self.tiles[i]["path"] for i in self.sel
+                      if i < len(self.tiles)} if keep_scroll else set())
+        self._sel_painted = set()
         for w in self._empty_box:                # 上一轮的空状态盒
             w.destroy()
         self._empty_box = []
@@ -1510,6 +1532,8 @@ class App(tk.Tk):
             tk.Label(box, text=empty[1], font=theme.F_SMALL, bg=BG, fg=TEXT_FAINT,
                      justify="center").pack()
             self._empty_box = [box]
+            self.sel = set()
+            self._say_selection()
             self.gen += 1                # 让上一组的缩略图线程收工，别再白干
             self.canvas.update_idletasks()
             return
@@ -1558,8 +1582,18 @@ class App(tk.Tk):
 
         self.canvas.update_idletasks()
         self.canvas.yview_moveto(frac)
-        if not keep_scroll:
-            self._set_focus(0)
+        # 选择集：删除后刷新要按路径找回剩下的；换组则回到第一张
+        if old_paths:
+            self.sel = {i for i, it in enumerate(self.tiles) if it["path"] in old_paths}
+        else:
+            self.sel = set()
+        if self.sel:
+            self.focus_idx = min(self.sel)
+        elif self.tiles:
+            self.focus_idx = 0
+            self.sel = {0}
+        self._paint_sel()
+        self._say_selection()
         if len(items) > MAX_TILES:
             self._set_status(f"本组共 {len(items)} 个 · 仅显示最近 {MAX_TILES} 个")
 
@@ -1573,9 +1607,12 @@ class App(tk.Tk):
         """建一个格子（含全部绑定）放进池子。
 
         idx 是池子里的固定槽位，所以绑定只挂一次；回调里靠 self.tiles[idx] 取当前数据。
+
+        边框固定 2px：选中时是强调蓝、悬停是常规灰、其余是弱灰。之所以不做 1px→2px
+        的切换，是因为 highlightthickness 会改变内容区尺寸，切换时整格图片会抖一下。
         """
         cell = tk.Frame(self.grid_frame, bg=BG, width=CELL, height=CELL,
-                        highlightthickness=1, highlightbackground=BORDER_SOFT)
+                        highlightthickness=2, highlightbackground=BORDER_SOFT)
         cell.grid_propagate(False)     # 固定格子尺寸，图片在格内居中
         lbl = tk.Label(cell, bg=SURFACE_ALT, fg=TEXT_FAINT, font=theme.F_TINY,
                        cursor="hand2")
@@ -1583,14 +1620,22 @@ class App(tk.Tk):
         lbl._online = False            # 占位块是不是「只存在云上」的那种
         lbl.place(relx=0.5, rely=0.5, anchor="center",
                   width=THUMB_BOX, height=THUMB_BOX)
+        # 左键：点选 / Ctrl 加选 / Shift 范围选 / 拖动框选
+        # 右键：抬起（没拖动）弹菜单；拖动超过阈值则走 OLE 拖出
+        # 两套手势共用阈值判断 —— 单击与拖动靠「按下到松开移动了多少」区分，
+        # 所以 Button-3 不再直接弹菜单，而要等到 ButtonRelease-3。
         for w in (cell, lbl):
             w.bind("<Double-Button-1>", lambda e, i=idx: self.open_viewer(i))
-            w.bind("<Button-3>", lambda e, i=idx: self.tile_menu(e, i))
-            w.bind("<Button-1>", lambda e, i=idx: self._grab_focus(i))
+            w.bind("<Button-1>", lambda e, i=idx: self._sel_down(e, i))
+            w.bind("<B1-Motion>", lambda e, i=idx: self._sel_drag(e, i))
+            w.bind("<ButtonRelease-1>", lambda e, i=idx: self._sel_up(e, i))
+            w.bind("<Button-3>", lambda e, i=idx: self._ctx_down(e, i))
+            w.bind("<B3-Motion>", lambda e, i=idx: self._ctx_drag(e, i))
+            w.bind("<ButtonRelease-3>", lambda e, i=idx: self._ctx_up(e, i))
             w.bind("<Enter>", lambda e, c=cell, i=idx: c.configure(
-                highlightbackground=theme.ACCENT if i == self.focus_idx else BORDER))
+                highlightbackground=theme.ACCENT if i in self.sel else BORDER))
             w.bind("<Leave>", lambda e, c=cell, i=idx: c.configure(
-                highlightbackground=theme.ACCENT if i == self.focus_idx else BORDER_SOFT))
+                highlightbackground=theme.ACCENT if i in self.sel else BORDER_SOFT))
         return cell, lbl
 
     def _stop_thumbs(self):
@@ -1606,7 +1651,7 @@ class App(tk.Tk):
 
     def _grab_focus(self, idx):
         self.canvas.focus_set()
-        self._set_focus(idx)
+        self.select_only(idx)
 
     def _move_focus(self, dx, dy):
         if not self.tiles:
@@ -1615,16 +1660,39 @@ class App(tk.Tk):
         if 0 <= target < len(self.tiles):
             self._set_focus(target)
 
-    def _set_focus(self, idx):
-        """键盘焦点格用强调色边框标出，并保证它滚进可视区域。"""
-        if not self.tile_cells:
-            return
-        idx = max(0, min(idx, len(self.tile_cells) - 1))
-        prev, self.focus_idx = getattr(self, "focus_idx", 0), idx
-        for i in (prev, idx):
+    # ---------------- 多选 / 框选 / 拖出 ----------------
+    #
+    # 选择集只存在槽位下标上（self.sel），不是路径：池子槽位固定，重画时下标语义
+    # 不变；真需要跨重画保留时（删除后刷新），按路径重建一次就行。
+    #
+    # 视觉上不做「焦点框」和「选中框」两套 —— 键盘焦点永远落在选中集里，
+    # 一套强调蓝边框就够了，省掉 400 格 × 两种状态的颜色协调。
+
+    def _paint_sel(self):
+        """把选中态画到格子上（增量）。
+
+        池子最多 400 格，每改一格都是一次 Tcl 往返。框选时鼠标每动一下重绘 400 格
+        会直接卡死，所以只动「上一轮画过」与「这一轮要画」的差集。
+        """
+        want = {i for i in self.sel if 0 <= i < len(self.tile_cells)}
+        for i in want ^ self._sel_painted:
             if 0 <= i < len(self.tile_cells):
                 self.tile_cells[i].configure(
-                    highlightbackground=theme.ACCENT if i == idx else BORDER_SOFT)
+                    highlightbackground=theme.ACCENT if i in want else BORDER_SOFT)
+        self._sel_painted = want
+
+    def _say_selection(self):
+        n = len(self.sel)
+        if n > 1:
+            self._set_right("已选 %d 张 · 右键拖动可拖出" % n)
+        elif n == 1:
+            self._set_right("右键拖动可拖出到桌面 / 其他应用")
+        else:
+            self._set_right("")
+
+    def _scroll_into_view(self, idx):
+        if not self.tile_cells or not (0 <= idx < len(self.tile_cells)):
+            return
         cell = self.tile_cells[idx]
         self.canvas.update_idletasks()
         total = max(self.grid_frame.winfo_height(), 1)
@@ -1635,6 +1703,207 @@ class App(tk.Tk):
             self.canvas.yview_moveto(y / total)
         elif y + h > top + view:
             self.canvas.yview_moveto(max(0.0, (y + h - view) / total))
+
+    def select_only(self, idx):
+        if not self.tile_cells:
+            return
+        idx = max(0, min(idx, len(self.tile_cells) - 1))
+        self.anchor = self.focus_idx = idx
+        self.sel = {idx}
+        self._paint_sel()
+        self._say_selection()
+        self._scroll_into_view(idx)
+
+    def toggle_at(self, idx):
+        """Ctrl+点击 / 空格：切换某一格的选中状态。"""
+        if not self.tile_cells:
+            return
+        idx = max(0, min(idx, len(self.tile_cells) - 1))
+        if idx in self.sel:
+            self.sel.discard(idx)
+        else:
+            self.sel.add(idx)
+        self.anchor = self.focus_idx = idx
+        self._paint_sel()
+        self._say_selection()
+
+    def select_range(self, a, b):
+        """Shift+点击：从锚点到当前格整段选中。"""
+        if not self.tile_cells:
+            return
+        last = len(self.tile_cells) - 1
+        a = max(0, min(a, last))
+        b = max(0, min(b, last))
+        lo, hi = min(a, b), max(a, b)
+        self.sel = set(range(lo, hi + 1))
+        self.focus_idx = b
+        self._paint_sel()
+        self._say_selection()
+
+    def select_all(self):
+        if not self.tiles:
+            return
+        self.sel = set(range(len(self.tiles)))
+        self._paint_sel()
+        self._say_selection()
+        self._set_status("已全选本组 %d 张" % len(self.sel))
+
+    def clear_selection(self):
+        self.sel = set()
+        self._paint_sel()
+        self._say_selection()
+
+    def _set_focus(self, idx):
+        """键盘方向键 = 单选移动（多选只靠鼠标与 Ctrl+A，省掉一套视觉）。"""
+        self.select_only(idx)
+
+    def _canvas_xy(self, event):
+        """屏幕坐标 → canvas 内部坐标，框选矩形和命中判定都在这套坐标里。"""
+        return (self.canvas.canvasx(event.x_root - self.canvas.winfo_rootx()),
+                self.canvas.canvasy(event.y_root - self.canvas.winfo_rooty()))
+
+    def _tiles_in_rect(self, x0, y0, x1, y1):
+        """矩形盖到了哪些格子。
+
+        不逐个问 cell.winfo_x()（400 格就是 400 次 Tcl 往返，框选时每帧都问会卡死），
+        直接按网格步长反算行列。格子 col 占 [S2+col*step, S2+col*step+CELL]，
+        相交条件解出 col 的上下界 —— 注意下界要减掉 CELL，否则贴着格子右半边
+        起手的框会漏掉那一列。
+        """
+        if not self.tiles or not self._cols:
+            return set()
+        step = CELL + 2 * theme.S2
+        lo_x, hi_x = sorted((x0, x1))
+        lo_y, hi_y = sorted((y0, y1))
+        c0 = max(0, int((lo_x - CELL - theme.S2) // step))
+        c1 = int((hi_x - theme.S2) // step)
+        r0 = max(0, int((lo_y - CELL - theme.S2) // step))
+        r1 = int((hi_y - theme.S2) // step)
+        hit = set()
+        for row in range(r0, r1 + 1):
+            for col in range(c0, c1 + 1):
+                i = row * self._cols + col
+                if 0 <= i < len(self.tiles):
+                    hit.add(i)
+        return hit
+
+    def _sel_down(self, event, idx):
+        self.canvas.focus_set()
+        if event.state & 0x0004:            # Control：加选 / 减选
+            self.toggle_at(idx)
+        elif event.state & 0x0001:          # Shift：范围选
+            self.select_range(self.anchor, idx)
+        else:
+            self.select_only(idx)
+            self.anchor = idx
+        self._press = (idx,) + self._canvas_xy(event)
+
+    def _sel_drag(self, event, idx):
+        p = self._press
+        if not p:
+            return
+        x, y = self._canvas_xy(event)
+        if self._band is None:
+            if abs(x - p[1]) + abs(y - p[2]) < DRAG_THRESHOLD:
+                return              # 还没越过阈值，当点击处理
+            # 框选：虚线蓝框 + 12% 网点填充。Tk 的 canvas 没有真 alpha，
+            # stipple 已经很接近"半透明垫底"的观感，也就不必再叠一个窗口。
+            self._band = self.canvas.create_rectangle(
+                p[1], p[2], p[1], p[2], outline=theme.ACCENT, dash=(4, 3),
+                width=1, fill=theme.ACCENT, stipple="gray12")
+        self.canvas.coords(self._band, p[1], p[2], x, y)
+        self.sel = self._tiles_in_rect(p[1], p[2], x, y)
+        if self.sel:
+            self.focus_idx = max(self.sel)
+        self._paint_sel()
+        self._say_selection()
+
+    def _sel_up(self, event, idx):
+        self._press = None
+        if self._band is not None:
+            self.canvas.delete(self._band)
+            self._band = None
+
+    def _ctx_down(self, event, idx):
+        """右键按下：先不弹菜单，等看是"点"还是"拖"。"""
+        self._ctx = [idx, event.x_root, event.y_root, False]
+
+    def _ctx_drag(self, event, idx):
+        c = self._ctx
+        if not c or c[3]:
+            return
+        if abs(event.x_root - c[1]) + abs(event.y_root - c[2]) < DRAG_THRESHOLD:
+            return
+        if c[0] not in self.sel:      # 右键点在未选中的格子上：先选中它再拖
+            self.select_only(c[0])
+        c[3] = True
+        self._begin_drag()
+
+    def _ctx_up(self, event, idx):
+        c, self._ctx = self._ctx, None
+        if c and not c[3]:            # 没拖动过 = 单击，弹菜单
+            self.tile_menu(event, idx)
+
+    def _begin_drag(self):
+        """右键拖动越过阈值：把选中的文件交给 OLE。
+
+        不直接在 <B3-Motion> 的回调栈里调 DoDragDrop —— 它会自己跑模态消息循环，
+        在 Tk 的回调里重入容易出怪事。after(1) 先把控制权还给 mainloop。
+        """
+        items = [self.tiles[i] for i in sorted(self.sel) if i < len(self.tiles)]
+        paths = [it["path"] for it in items if not it.get("online_only")]
+        if not paths:
+            self._set_status("选中的都是「仅在线」文件，本地没有数据，拖不出去")
+            return
+        self.after(1, lambda: self._do_drag(paths))
+
+    def _do_drag(self, paths):
+        self._press = None
+        self._ctx = None
+        try:
+            self.grab_release()               # Tk 的隐式 grab 会 SetCapture，和 OLE 抢鼠标
+        except tk.TclError:
+            pass
+        try:
+            ctypes.windll.user32.ReleaseCapture()
+        except Exception:                     # noqa: BLE001
+            pass
+        try:
+            effect, files = dnd.drag_files(self.winfo_id(), paths)
+        except Exception as exc:              # noqa: BLE001 —— 拖放失败不该把界面带走
+            Dialog.error(self, "拖出失败", "%s: %s" % (type(exc).__name__, exc))
+            return
+        if effect & dnd.DROPEFFECT_MOVE:
+            # MOVE 的语义是「目标已经搬走/删除了，源该收尾」。
+            # 这里走回收站而不是 os.remove —— 拖错了还能捞回来。
+            self._recycle_paths(files)
+        elif effect & dnd.DROPEFFECT_COPY:
+            self._set_status("已拖出 %d 个文件（副本），原文件保留" % len(files))
+
+    def _recycle_paths(self, paths):
+        """把文件送进 Windows 回收站，并把它们从界面上摘掉。"""
+        files = [p for p in paths if os.path.isfile(p)]
+        if not files:
+            return 0
+        ok, info = library.recycle(files)
+        if not ok:
+            Dialog.error(self, "移到回收站失败", str(info))
+            return 0
+        gone = {os.path.normcase(os.path.abspath(p)) for p in files}
+        items = [it for it in self.tiles
+                 if os.path.normcase(os.path.abspath(it["path"])) in gone]
+        if items:
+            if len(items) == 1:
+                self._set_status("已移到回收站：%s" % items[0]["name"])
+            else:
+                self._set_status("已把 %d 个文件移到回收站（可从回收站还原）" % len(items))
+            self._keep_scroll = True
+            self._remove_items(items)
+        if self.tree.selection():
+            self.on_select()
+        else:
+            self.show_group([])
+        return len(items)
 
     def _thumb_worker(self, gen, tiles):
         for i, it in enumerate(tiles):
@@ -1665,20 +1934,39 @@ class App(tk.Tk):
         Viewer(self, self.shown, self.item_index.get(id(self.tiles[idx]), 0))
 
     def tile_menu(self, event, idx):
-        it = self.tiles[idx]
-        local = it["device"] == library.LOCAL_DEVICE
-        PopupMenu(self, [
-            # 复制文件本身（CF_HDROP）：资源管理器里 Ctrl+V 就是一份副本
-            ("复制", lambda: self.copy_tiles([it])),
-            ("用系统程序打开", lambda p=it["path"]: os.startfile(p)),
+        """右键菜单：作用对象是整个选择集，不是鼠标下那一张。
+
+        右键点在未选中的格子上时，先把它变成唯一选中 —— 这样 "右键某张 → 复制"
+        永远只复制那一张，不会莫名其妙复制到上一次留下的一堆。
+        """
+        if idx not in self.sel:
+            self.select_only(idx)
+        items = [self.tiles[i] for i in sorted(self.sel) if i < len(self.tiles)]
+        n = len(items)
+        if not n:
+            return
+        local = all(it["device"] == library.LOCAL_DEVICE for it in items)
+        rows = [("复制" if n == 1 else "复制 %d 个文件" % n,
+                 lambda: self.copy_tiles(items))]
+        if n == 1:
+            p = items[0]["path"]
+            rows.append(("用系统程序打开", lambda p=p: os.startfile(p)))
             # 别用 os.system：windowed 程序下会闪一个黑框，路径里的引号也得自己拼
-            ("在资源管理器中定位", lambda p=it["path"]: subprocess.Popen(
-                ["explorer", f"/select,{p}"], creationflags=0x08000000)),
+            rows.append(("在资源管理器中定位", lambda p=p: subprocess.Popen(
+                ["explorer", f"/select,{p}"], creationflags=0x08000000)))
+        else:
+            folder = os.path.dirname(items[0]["path"])
+            rows.append(("打开所在文件夹", lambda f=folder: os.startfile(f)))
+        rows += [
+            "-",
+            ("全选（%d 张）" % len(self.tiles), self.select_all),
+            ("取消选择", self.clear_selection),
             "-",
             # 本机文件就是电脑上的原文件（不是手机的副本），文案不能照抄
             ("移到回收站" if local else "移到回收站（仅电脑上的副本）",
-             lambda: self.recycle_one(idx), "danger"),
-        ], event.x_root, event.y_root)
+             lambda: self.ask_recycle(items), "danger"),
+        ]
+        PopupMenu(self, rows, event.x_root, event.y_root)
 
     def copy_tiles(self, items):
         """把文件放进剪贴板：资源管理器里 Ctrl+V 就能粘出一份副本。"""
@@ -1688,53 +1976,62 @@ class App(tk.Tk):
             return
         self._set_status(f"已复制 {info} 个文件 · 到资源管理器里 Ctrl+V 粘贴副本")
 
-    def _remove_item(self, it):
-        """从内存索引里摘掉一个条目（本地副本进了回收站后调用，不重扫磁盘）。
+    def _remove_items(self, items):
+        """从内存索引里批量摘掉条目（本地副本进了回收站后调用，不重扫磁盘）。
 
-        全库 2500+ 个文件重新 scandir 一圈要好几秒，而这里只少了一个文件；
+        全库 2500+ 个文件重新 scandir 一圈要好几秒，而这里只少了几个文件；
         顺带让时间柱同步收缩 —— 某个月/某一年空了就直接从柱子上消失。
+
+        批量版只重建一次时间柱：逐张调用时每张都重建一次树，删 50 张就是 50 次。
         """
-        self.items = [x for x in self.items if x is not it]
+        if not items:
+            return
+        ids = {id(x) for x in items}
+        self.items = [x for x in self.items if id(x) not in ids]
         if self.local_items:
-            self.local_items = [x for x in self.local_items if x is not it]
-        self.shown = [x for x in self.shown if x is not it]
+            self.local_items = [x for x in self.local_items if id(x) not in ids]
+        self.shown = [x for x in self.shown if id(x) not in ids]
         self.item_index = {id(x): i for i, x in enumerate(self.shown)}
         for year in list(self.tree_data):
             months = self.tree_data[year]
             for month in list(months):
-                if any(x is it for x in months[month]):
-                    rest = [x for x in months[month] if x is not it]
-                    if rest:
-                        months[month] = rest
-                    else:
-                        del months[month]
+                rest = [x for x in months[month] if id(x) not in ids]
+                if rest:
+                    months[month] = rest
+                else:
+                    del months[month]
             if not months:
                 del self.tree_data[year]
         self._rebuild_tree()
 
-    def recycle_one(self, idx):
-        it = self.tiles[idx]
-        local = it["device"] == library.LOCAL_DEVICE
-        if Dialog.ask(self, "移到回收站",
-                      f"把这张移到回收站？\n\n{it['name']}\n\n"
-                      + ("这是这台电脑上的原文件，会进 Windows 回收站，"
-                         "想反悔可以从回收站还原。"
-                         if local else
-                         "只影响电脑上的副本，手机上的原图不会被改动。"),
-                      kind="warn", buttons=["取消", "确定"]) != 1:
+    def _remove_item(self, it):
+        self._remove_items([it])
+
+    def ask_recycle(self, items):
+        """确认后把一批文件移到回收站。多选时只列前三个名字 + 总数。"""
+        items = [it for it in items if it]
+        if not items:
             return
-        ok, info = library.recycle([it["path"]])
-        if not ok:
-            Dialog.error(self, "移到回收站失败", str(info))
+        n = len(items)
+        shown = "\n".join(it["name"] for it in items[:3])
+        if n > 3:
+            shown += "\n…（共 %d 个）" % n
+        local = all(it["device"] == library.LOCAL_DEVICE for it in items)
+        title = "移到回收站" if n == 1 else "把 %d 个移到回收站" % n
+        msg = ("%s\n\n%s" % ("把这张移到回收站？" if n == 1
+                             else "把这 %d 个移到回收站？" % n, shown)
+               + "\n\n"
+               + ("这是这台电脑上的原文件，会进 Windows 回收站，"
+                  "想反悔可以从回收站还原。"
+                  if local else
+                  "只影响电脑上的副本，手机上的原图不会被改动。"))
+        if Dialog.ask(self, title, msg, kind="warn", buttons=["取消", "确定"]) != 1:
             return
-        self._set_status(f"已移到回收站：{it['name']}")
-        # 立刻从画面上拿掉：不重扫全库，也不等用户再点一次那个日期
-        self._remove_item(it)
         self._keep_scroll = True
-        if self.tree.selection():
-            self.on_select()
-        else:
-            self.show_group([])
+        self._recycle_paths([it["path"] for it in items])
+
+    def recycle_one(self, idx):
+        self.ask_recycle([self.tiles[idx]])
 
     # ---------------- 目录 ----------------
 

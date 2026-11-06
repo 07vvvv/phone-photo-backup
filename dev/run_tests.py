@@ -33,6 +33,7 @@ CORE = [
     ("theme 自检", ["theme.py"], "颜色插值", 60),
     ("mfplay 自检", ["mfplay.py"], "MFPlay 接口与 vtable 下标", 120),
     ("shellthumb 自检", ["shellthumb.py"], "Shell 缩略图接口层", 120),
+    ("dnd 自检", ["dnd.py"], "OLE 拖源 / vtable 下标 / CF_HDROP 字节 / 键态判定", 120),
 ]
 
 GUI = [
@@ -42,6 +43,8 @@ GUI = [
     ("本机文件回归", ["dev/_local_test.py"], "过滤规则 / EXIF 优先 / 与手机库合并", 300),
     ("内嵌视频回归", ["dev/_inline_video_test.py"], "出画面 / 画面在动 / 停止后复原", 300),
     ("新手指引回归", ["dev/_tour_test.py"], "顶栏入口 / 五步高亮定位 / 缩放跟随 / 降级 / 关闭落标记", 300),
+    ("多选与拖出回归", ["dev/_dnd_test.py"],
+     "单选·Ctrl·Shift·框选 / 右键点击 vs 拖动 / MOVE 走回收站 / 批量删除只重建一次", 300),
 ]
 
 EXTRA = [
