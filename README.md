@@ -564,6 +564,15 @@ python dev\_share_accept.py      # 把分享包当成「别人刚拿到」跑一
 python dev\_motion_scan.py       # 统计库里有多少张动态照片
 ```
 
+**拖放的手工验收**（这一环自动测试测不了 —— 必须真人按住鼠标，Windows 才会真的交出文件）：
+
+```powershell
+python dev\_dnd_live.py
+```
+
+按住右键把窗口里的卡片拖到**桌面** → 桌面应出现 2 个 txt；再拖到**回收站** → 进回收站。
+脚本会把 `DoDragDrop` 返回的 effect 打出来（`1`=COPY / `2`=MOVE / `0`=没落到能接收的地方）。
+
 **只列清单不下载**：
 
 ```powershell
