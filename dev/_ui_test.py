@@ -400,6 +400,51 @@ finally:
     mod.theme.InputDialog.ask = real_input
 
 # --------------------------------------------------------------------------
+# 新手引导「只在第一次打开时自动弹」
+#
+# 产品口径：下载后第一次打开主动走一遍，之后每次启动都不许再打扰。
+# 走完/跳过都要立刻把 tour_done 落进 config —— 落不下去的话下次启动又会弹。
+# 这里全程打桩 load_config / save_config，绝不碰用户真实的 config.json。
+
+real_load2, real_save2 = mod.load_config, mod.save_config
+try:
+    def _no_grab():
+        try:
+            app.grab_release()
+        except Exception:      # noqa: BLE001
+            pass
+
+    mod.save_config = lambda cfg: None
+    mod.load_config = lambda: {}
+    app._tour = None
+    _no_grab()
+    app._maybe_show_tour()
+    ok("没走过引导时会自动弹一次", app._tour is not None)
+    if app._tour is not None:
+        app._tour.close()
+        app._tour = None
+
+    mod.load_config = lambda: {"tour_done": 1}
+    app._tour = None
+    _no_grab()
+    app._maybe_show_tour()
+    ok("走过一次就不再自动弹（config 里有 tour_done）", app._tour is None)
+
+    seen = {}
+    mod.load_config = lambda: {}
+    mod.save_config = lambda cfg: seen.update(cfg)
+    app._tour = None
+    _no_grab()
+    app._maybe_show_tour()
+    if app._tour is not None:
+        app._tour.close()
+        app._tour = None
+    ok("关掉引导立刻把 tour_done 写进 config", seen.get("tour_done") == 1)
+finally:
+    mod.load_config, mod.save_config = real_load2, real_save2
+    app._tour = None
+
+# --------------------------------------------------------------------------
 
 app.destroy()
 shutil.rmtree(tmp_root, ignore_errors=True)

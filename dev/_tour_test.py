@@ -276,6 +276,9 @@ def main():
        "新手指引" in str(welcome.STEPS[-1]),
        "第 5 步正文里没出现「新手指引」四个字")
 
+    # 注：「只在第一次打开时自动弹」这条要靠真实 App 才能测（_maybe_show_tour 是
+    # App 的方法，本文件用的是假 Host 窗口），所以放在 dev/_ui_test.py 里。
+
     app.destroy()
     print("\n共 %d 项，失败 %d 项" % (len(PASS) + len(FAIL), len(FAIL)))
     if FAIL:
