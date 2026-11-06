@@ -349,7 +349,11 @@ class Tour:
         c.create_window(x + CARD_PAD, y + CARD_PAD + 18, window=body, anchor="nw",
                         width=wrap, tags="card")
         body.update_idletasks()
-        card_h = 18 + body.winfo_reqheight() + CARD_PAD
+        # 卡片高度 = 上边距 + 进度点占掉的那一条 + 正文 + 下边距。
+        # 正文是从 y+CARD_PAD+18 起画的，所以底下那份 CARD_PAD 要单独补回来。
+        # 以前这里只加了一份，结果正文底边正好压在卡片底边上 —— 最后那行按钮
+        # 看上去像被卡片从下面顶出去了。
+        card_h = CARD_PAD + 18 + body.winfo_reqheight() + CARD_PAD
 
         bg_id = round_rect(c, x, y, x + CARD_W, y + card_h, CARD_RADIUS,
                            fill=BG, outline=BORDER, tags="card")
