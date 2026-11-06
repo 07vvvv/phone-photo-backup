@@ -174,9 +174,30 @@ def main():
        # 3.12 的 tkinter 这里回的是 Tcl_Obj 而不是 str，统一 str() 一下再比
        str(tour.veil.attributes("-transparentcolor")).lower() == welcome.MAGIC.lower())
 
-    # ---- 3. 四步高亮都精确套住目标控件 ----
+    # 先把卡片真画出来，下面几条要量它的实际几何
     tour.show()
     app.update()
+
+    # ---- 2b. 卡片底部留白 ----
+    # card_h 是手算的（上边距 + 进度点 + 正文 + 下边距），曾经漏加过一份下边距，
+    # 结果「开始了解」按钮正好压在卡片底边上。这条专门钉住那个位置。
+    def bottom_gap():
+        box = tour.lc.bbox("card")
+        body = [w for w in tour.lc.winfo_children()
+                if w.winfo_reqheight() > 50][0]
+        foot = body.winfo_children()[-1]
+        btns = [w for w in foot.winfo_children() if w.winfo_class() == "Canvas"]
+        btn = btns[-1]
+        edge = (body.winfo_y() + foot.winfo_y() + btn.winfo_y()
+                + btn.winfo_height())
+        return box[3] - edge
+
+    gap = bottom_gap()
+    ok("卡片底部留白不小于内边距（按钮不贴卡片底边）",
+       gap >= welcome.CARD_PAD - 4)
+    ok("卡片底部留白不会大到离谱（%dpx）" % gap, gap <= welcome.CARD_PAD + 12)
+
+    # ---- 3. 四步高亮都精确套住目标控件 ----
     cases = [("dev", 8), ("backup", 6), ("nav", 0), ("wireless", 6), ("tour", 6)]
     for key, pad in cases:
         wdg = {"dev": app.dev_box, "backup": app.backup_btn,
